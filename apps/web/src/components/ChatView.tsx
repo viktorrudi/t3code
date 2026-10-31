@@ -1,3 +1,4 @@
+import { getProjectWorkspaceRoots } from "@t3tools/contracts";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -11132,6 +11133,9 @@ export default function ChatView(props: ChatViewProps) {
           }`}
           environmentId={activeThread.environmentId}
           cwd={activeWorkspaceRoot ?? ""}
+          workspaceRoots={
+            activeProject ? getProjectWorkspaceRoots(activeProject, activeThread.worktreePath) : []
+          }
           projectName={activeProject?.title ?? ""}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}

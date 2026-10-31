@@ -165,6 +165,7 @@ export const make = Effect.gen(function* () {
     id: row.projectId,
     title: row.title,
     workspaceRoot: row.workspaceRoot,
+    additionalWorkspaceRoots: row.additionalWorkspaceRoots ?? [],
     repositoryIdentity: enrichment?.repositoryIdentity ?? null,
     faviconPath: row.faviconPath ?? enrichment?.faviconPath ?? null,
     defaultModelSelection: row.defaultModelSelection,
@@ -214,6 +215,17 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+
+  const normalizeAdditionalRoots = (
+    projectId: ProjectId,
+    primary: string,
+    roots: ReadonlyArray<string>,
+  ) =>
+    Effect.forEach(roots, (workspaceRoot) => normalizeWorkspaceRoot({ projectId, workspaceRoot }), {
+      concurrency: 8,
+    }).pipe(
+      Effect.map((normalized) => [...new Set(normalized)].filter((root) => root !== primary)),
+    );
 
   /**
    * Plan one command against rows read under its locks, then commit its event or
@@ -347,6 +359,11 @@ export const make = Effect.gen(function* () {
         projectId: input.projectId,
         title: input.title,
         workspaceRoot,
+        additionalWorkspaceRoots: yield* normalizeAdditionalRoots(
+          input.projectId,
+          workspaceRoot,
+          input.additionalWorkspaceRoots ?? [],
+        ),
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
@@ -374,6 +391,15 @@ export const make = Effect.gen(function* () {
         projectId: input.projectId,
         ...(input.title === undefined ? {} : { title: input.title }),
         ...(workspaceRoot === previousRoot ? {} : { workspaceRoot }),
+        ...(input.additionalWorkspaceRoots === undefined && workspaceRoot === previousRoot
+          ? {}
+          : {
+              additionalWorkspaceRoots: yield* normalizeAdditionalRoots(
+                input.projectId,
+                workspaceRoot,
+                input.additionalWorkspaceRoots ?? existing.value.additionalWorkspaceRoots ?? [],
+              ),
+            }),
         ...(input.defaultModelSelection === undefined
           ? {}
           : { defaultModelSelection: input.defaultModelSelection }),

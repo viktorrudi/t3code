@@ -1,3 +1,5 @@
+import { WorkspaceFolderPicker } from "./WorkspaceFolderPicker";
+import { filePathWithinFolder, folderFilePath } from "./workspaceFolders";
 import { Spinner } from "~/components/ui/spinner";
 import {
   AuthPreviewOperateScope,
@@ -119,6 +121,7 @@ import {
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
+  workspaceRoots?: ReadonlyArray<string>;
   projectName: string;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
@@ -1025,7 +1028,7 @@ function initialExplorerOpen(): boolean {
   }
 }
 
-export default function FilePreviewPanel({
+function WorkspaceFilePreviewPanel({
   environmentId,
   cwd,
   projectName,
@@ -1501,6 +1504,49 @@ export default function FilePreviewPanel({
             />
           </aside>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** Store external-folder selections as absolute paths so each file keeps its root. */
+export default function FilePreviewPanel(props: FilePreviewPanelProps) {
+  const roots = props.workspaceRoots ?? [props.cwd];
+  const [choice, setChoice] = useState<{ root: string; path: string | null } | null>(null);
+  const absoluteRoot =
+    props.relativePath && isAbsolutePath(props.relativePath)
+      ? [...roots]
+          .sort((a, b) => b.length - a.length)
+          .find((root) => filePathWithinFolder(root, props.relativePath!) !== null)
+      : undefined;
+  const selectedRoot =
+    choice?.path === props.relativePath && roots.includes(choice.root)
+      ? choice.root
+      : (absoluteRoot ?? props.cwd);
+  const fileRoot = absoluteRoot ?? props.cwd;
+  const relativePath =
+    fileRoot !== selectedRoot
+      ? null
+      : absoluteRoot && props.relativePath
+        ? filePathWithinFolder(absoluteRoot, props.relativePath)
+        : props.relativePath;
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <WorkspaceFolderPicker
+        roots={roots}
+        value={selectedRoot}
+        onChange={(root) => setChoice({ root, path: props.relativePath })}
+      />
+      <div className="min-h-0 flex-1">
+        <WorkspaceFilePreviewPanel
+          {...props}
+          cwd={selectedRoot}
+          relativePath={relativePath}
+          onOpenFile={(file) => props.onOpenFile(folderFilePath(selectedRoot, file, props.cwd))}
+          onPendingChange={(file, pending) =>
+            props.onPendingChange(folderFilePath(selectedRoot, file, props.cwd), pending)
+          }
+        />
       </div>
     </div>
   );

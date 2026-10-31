@@ -1,3 +1,5 @@
+import { getProjectWorkspaceRoots } from "@t3tools/contracts";
+import { WorkspaceFolderPicker } from "./files/WorkspaceFolderPicker";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
@@ -235,10 +237,24 @@ export default function DiffPanel({
         }
       : null,
   );
-  const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
-  const activeRepositoryRoot = activeThread?.worktreePath
-    ? undefined
-    : activeProject?.repositoryIdentity?.rootPath;
+  const diffSelection = useDiffPanelStore((state) =>
+    selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
+  );
+  const primaryCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
+  const workspaceRoots = activeProject
+    ? getProjectWorkspaceRoots(activeProject, activeThread?.worktreePath)
+    : [];
+  const [selectedWorkspaceRoot, setSelectedWorkspaceRoot] = useState<string | null>(null);
+  const activeCwd =
+    diffSelection.kind !== "turn" &&
+    selectedWorkspaceRoot &&
+    workspaceRoots.includes(selectedWorkspaceRoot)
+      ? selectedWorkspaceRoot
+      : primaryCwd;
+  const activeRepositoryRoot =
+    activeThread?.worktreePath || activeCwd !== primaryCwd
+      ? undefined
+      : activeProject?.repositoryIdentity?.rootPath;
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
@@ -255,9 +271,6 @@ export default function DiffPanel({
           input: { cwd: activeCwd },
         })
       : null,
-  );
-  const diffSelection = useDiffPanelStore((state) =>
-    selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByRunId } =
@@ -722,6 +735,7 @@ export default function DiffPanel({
   }, [collapseScopeKey, defaultCollapsedDiffFileKeys, diffFileKeys]);
 
   const selectTurn = (runId: RunId) => {
+    setSelectedWorkspaceRoot(null);
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectTurn(routeThreadRef, runId);
   };
@@ -1062,6 +1076,15 @@ export default function DiffPanel({
 
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
+      <WorkspaceFolderPicker
+        roots={workspaceRoots}
+        value={activeCwd ?? ""}
+        onChange={(root) => {
+          setSelectedWorkspaceRoot(root);
+          if (routeThreadRef)
+            useDiffPanelStore.getState().selectGitScope(routeThreadRef, "unstaged");
+        }}
+      />
       {!activeThread ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.

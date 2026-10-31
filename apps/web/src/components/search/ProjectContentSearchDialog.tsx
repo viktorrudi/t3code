@@ -1,3 +1,5 @@
+import { WorkspaceFolderPicker } from "../files/WorkspaceFolderPicker";
+import { folderFilePath } from "../files/workspaceFolders";
 import { Spinner } from "~/components/ui/spinner";
 import { AuthFilesystemReadScope, type ProjectContentMatch } from "@t3tools/contracts";
 
@@ -107,6 +109,9 @@ function OpenContentSearchDialog(props: {
   readonly target: ActiveProjectTarget;
 }) {
   const { target } = props;
+  const [selectedRoot, setSelectedRoot] = useState<string | null>(null);
+  const roots = target.workspaceRoots ?? [target.cwd];
+  const cwd = selectedRoot && roots.includes(selectedRoot) ? selectedRoot : target.cwd;
   const { resolvedTheme } = useTheme();
   const [query, setQuery] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -118,7 +123,7 @@ function OpenContentSearchDialog(props: {
 
   const search = useProjectContentSearch({
     environmentId: target.environmentId,
-    cwd: target.cwd,
+    cwd,
     query,
     caseSensitive,
     wholeWord,
@@ -160,7 +165,9 @@ function OpenContentSearchDialog(props: {
       return;
     }
     props.onOpenChange(false);
-    useRightPanelStore.getState().openFile(target.threadRef, match.path, match.lineNumber);
+    useRightPanelStore
+      .getState()
+      .openFile(target.threadRef, folderFilePath(cwd, match.path, target.cwd), match.lineNumber);
   };
   const fileCount = useMemo(() => new Set(matches.map((match) => match.path)).size, [matches]);
   const showSearchStatus =
@@ -180,6 +187,7 @@ function OpenContentSearchDialog(props: {
             label="Match case"
             onClick={() => setCaseSensitive((current) => !current)}
           >
+            <WorkspaceFolderPicker roots={roots} value={cwd} onChange={setSelectedRoot} />
             Aa
           </SearchOptionButton>
           <SearchOptionButton

@@ -1751,7 +1751,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 displayText: turnInput.message.text || "Image attachment",
                 // A resumed session keeps the root it was created with; pin it to
                 // this thread's current checkout so edits land where T3 tracks them.
-                workspaceRoots: [cwd],
+                workspaceRoots: [cwd, ...(turnInput.runtimePolicy.additionalWorkspaceRoots ?? [])],
                 ifBusy: "queue",
                 ...(effort ? { reasoningEffort: effort } : {}),
               },

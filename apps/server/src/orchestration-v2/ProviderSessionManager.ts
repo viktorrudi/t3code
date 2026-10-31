@@ -1,3 +1,4 @@
+import { projectFolderContext } from "./projectFolderContext.ts";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -1819,7 +1820,15 @@ export const layerWithOptions = (
                     ),
                   ),
                   () =>
-                    runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
+                    runtime
+                      .startTurn({
+                        ...input,
+                        message: {
+                          ...input.message,
+                          text: projectFolderContext(input.message.text, input.runtimePolicy),
+                        },
+                      })
+                      .pipe(turnMetrics("send", input.modelSelection.model)),
                   (_, exit) =>
                     Exit.isFailure(exit)
                       ? observeActivity(

@@ -184,3 +184,11 @@ On mobile, use **Settings → Source control** to change selected environment de
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Attached folders
+
+In a project's overview, use **Folders** to attach related directories. Paths refer to the computer hosting the project. Ordinary directories do not need a Git repository.
+
+**Make primary** selects the default folder for local threads, terminals, Git, and new worktrees. Existing worktree threads keep their checkout. Other attached folders remain available to agents, including in worktree threads. Codex and Claude receive folder access automatically; other providers may request permission.
+
+Choose a folder in the file browser, file picker, content search, or changes panel to work in that directory. Git changes are reviewed per repository. Turn checkpoints belong to the primary repository. Removing a folder detaches it from the project without deleting files.

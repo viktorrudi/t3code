@@ -1,6 +1,11 @@
+import { useAtomValue } from "@effect/atom-react";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { AppText as Text, AppTextInput } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { getProjectWorkspaceRoots } from "@t3tools/contracts";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useState } from "react";
@@ -139,6 +144,9 @@ function ProjectOverviewContent(props: {
         </View>
       </SettingsSection>
 
+      {props.members.map((member) => (
+        <ProjectFolders key={`${member.environmentId}:${member.id}`} project={member} />
+      ))}
       <SettingsSection title="Checkouts">
         {props.members.map((member, index) => {
           const environment = props.environments.find(
@@ -171,5 +179,117 @@ function ProjectOverviewContent(props: {
         })}
       </SettingsSection>
     </>
+  );
+}
+
+function ProjectFolders({ project }: { readonly project: EnvironmentProject }) {
+  const [path, setPath] = useState("");
+  const [saving, setSaving] = useState(false);
+  const updateProject = useAtomCommand(projectEnvironment.update, {
+    label: "project folders update",
+    reportFailure: true,
+  });
+  const roots = getProjectWorkspaceRoots(project);
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(project.environmentId));
+  const supported = serverConfig?.environment.capabilities.attachedProjectFolders === true;
+  const canEdit =
+    useEnvironmentScope(project.environmentId, AuthOrchestrationOperateScope) && supported;
+  const save = async (workspaceRoot: string, additionalWorkspaceRoots: ReadonlyArray<string>) => {
+    if (saving || !canEdit) return;
+    setSaving(true);
+    try {
+      const result = await updateProject({
+        environmentId: project.environmentId,
+        input: { projectId: project.id, workspaceRoot, additionalWorkspaceRoots },
+      });
+      if (result._tag !== "Failure") setPath("");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const attach = () => {
+    const next = path.trim();
+    if (next && !roots.includes(next) && roots.length < 32)
+      void save(project.workspaceRoot, [...roots.slice(1), next]);
+  };
+  return (
+    <SettingsSection title="Folders">
+      <View className="gap-4 p-4">
+        {!supported ? (
+          <Text className="text-sm text-foreground-muted">
+            Update this environment’s T3 Code server to attach folders.
+          </Text>
+        ) : null}
+        <Text className="text-sm text-foreground-muted">
+          New chats, terminals, Git, and worktrees start in the primary folder. Paths refer to the
+          computer hosting this project.
+        </Text>
+        {roots.map((root, index) => (
+          <View key={root} className="gap-2">
+            <Text className="text-base text-foreground" selectable>
+              {root}
+            </Text>
+            {index === 0 ? (
+              <Text className="text-sm text-foreground-muted">Primary</Text>
+            ) : (
+              <View className="flex-row flex-wrap gap-4">
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Make ${root} primary`}
+                  disabled={saving || !canEdit}
+                  onPress={() =>
+                    void save(
+                      root,
+                      roots.filter((entry) => entry !== root),
+                    )
+                  }
+                  className="min-h-11 justify-center"
+                >
+                  <Text className="text-sm font-t3-medium text-primary-text">Make primary</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove folder ${root}`}
+                  disabled={saving || !canEdit}
+                  onPress={() =>
+                    void save(
+                      project.workspaceRoot,
+                      roots.slice(1).filter((entry) => entry !== root),
+                    )
+                  }
+                  className="min-h-11 justify-center"
+                >
+                  <Text className="text-sm font-t3-medium text-primary-text">Remove</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        ))}
+        <AppTextInput
+          accessibilityLabel="Folder path"
+          placeholder="/path/to/folder"
+          value={path}
+          onChangeText={setPath}
+          onSubmitEditing={attach}
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!saving && canEdit && roots.length < 32}
+          className="min-h-11 rounded-xl border-continuous bg-card px-3 text-base text-foreground"
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Add folder"
+          disabled={
+            saving || !canEdit || !path.trim() || roots.includes(path.trim()) || roots.length >= 32
+          }
+          onPress={attach}
+          className="min-h-11 justify-center"
+        >
+          <Text className="text-sm font-t3-medium text-primary-text">
+            {saving ? "Saving…" : "Add folder"}
+          </Text>
+        </Pressable>
+      </View>
+    </SettingsSection>
   );
 }

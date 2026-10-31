@@ -139,7 +139,10 @@ export function makeAntigravityAcpAdapterFlavor(
           options.makeRuntime({
             ...input,
             clientFileSystem: true,
-            additionalDirectories: [options.host.paths.attachmentsDir],
+            additionalDirectories: [
+              ...(input.additionalDirectories ?? []),
+              options.host.paths.attachmentsDir,
+            ],
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -186,18 +189,18 @@ export function makeAntigravityAcpAdapterFlavor(
       }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
     clientFileSystem: {
-      readTextFile: (request, cwd) =>
+      readTextFile: (request, cwd, additionalWorkspaceRoots = []) =>
         readAntigravityClientTextFile({
           fileSystem: options.fileSystem,
           path: options.path,
-          allowedRoots: antigravityClientFileRoots(cwd),
+          allowedRoots: [...antigravityClientFileRoots(cwd), ...additionalWorkspaceRoots],
           request,
         }),
-      writeTextFile: (request, cwd) =>
+      writeTextFile: (request, cwd, additionalWorkspaceRoots = []) =>
         writeAntigravityClientTextFile({
           fileSystem: options.fileSystem,
           path: options.path,
-          allowedRoots: antigravityClientFileRoots(cwd),
+          allowedRoots: [...antigravityClientFileRoots(cwd), ...additionalWorkspaceRoots],
           request,
         }),
     },

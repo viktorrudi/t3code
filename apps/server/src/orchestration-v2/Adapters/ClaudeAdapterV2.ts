@@ -839,6 +839,7 @@ export function makeClaudeQueryOptions(input: {
   readonly resume: boolean;
   readonly resumeSessionAt?: string;
   readonly cwd: string | null;
+  readonly additionalWorkspaceRoots?: ReadonlyArray<string>;
   /**
    * The attachments dir grant lets the agent Read/copy pasted images at the
    * paths appended to the turn text, without an approval prompt. It is a leaf
@@ -947,6 +948,7 @@ export function makeClaudeQueryOptions(input: {
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
+    ...(input.additionalWorkspaceRoots ?? []),
     ...(input.cwd === null ? [] : [input.cwd]),
     ...(input.attachmentsDir === undefined ? [] : [input.attachmentsDir]),
   ];
@@ -1661,6 +1663,10 @@ export function claudeEffectiveQueryPolicyKey(
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
     readonly mcpEnvironment?: Readonly<Record<string, string>>;
+    readonly workspace?: {
+      readonly cwd: string | null;
+      readonly additionalWorkspaceRoots: ReadonlyArray<string>;
+    };
   },
 ): string {
   return JSON.stringify({
@@ -1672,6 +1678,7 @@ export function claudeEffectiveQueryPolicyKey(
     }),
     mcpServers: mcpOverrides.mcpServers,
     mcpEnvironment: mcpOverrides.mcpEnvironment,
+    workspace: mcpOverrides.workspace,
   });
 }
 
@@ -7298,7 +7305,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
-          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
+          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, {
+            ...mcpOverrides,
+            workspace: {
+              cwd: turnInput.runtimePolicy.cwd,
+              additionalWorkspaceRoots: turnInput.runtimePolicy.additionalWorkspaceRoots ?? [],
+            },
+          });
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
@@ -7373,6 +7386,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             resume: shouldResume,
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
+            additionalWorkspaceRoots: turnInput.runtimePolicy.additionalWorkspaceRoots ?? [],
             attachmentsDir,
             settings: adapterOptions.settings,
             environment: { ...adapterOptions.environment, ...mcpOverrides.mcpEnvironment },

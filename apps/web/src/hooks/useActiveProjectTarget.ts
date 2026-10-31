@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { getProjectWorkspaceRoots } from "@t3tools/contracts";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 
 import { useProjects } from "~/state/entities";
@@ -8,6 +9,7 @@ import { useHandleNewThread } from "./useHandleNewThread";
 export interface ActiveProjectTarget {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
+  readonly workspaceRoots?: ReadonlyArray<string>;
   readonly projectName: string;
   readonly threadRef: ScopedThreadRef;
 }
@@ -35,6 +37,7 @@ export function useActiveProjectTarget(): ActiveProjectTarget | null {
   return {
     environmentId: project.environmentId,
     cwd,
+    workspaceRoots: getProjectWorkspaceRoots(project, thread.worktreePath),
     projectName: project.title,
     threadRef: scopeThreadRef(thread.environmentId, threadId),
   };

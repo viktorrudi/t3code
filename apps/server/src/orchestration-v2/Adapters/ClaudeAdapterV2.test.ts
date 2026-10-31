@@ -10017,3 +10017,21 @@ describe("ClaudeAdapterV2 query message stream", () => {
     }),
   );
 });
+
+it("grants attached project folders to Claude with the worktree as cwd", () => {
+  const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+    nativeThreadId: "attached-folders",
+    resume: false,
+    cwd: "/studio-worktree",
+    additionalWorkspaceRoots: ["/admin", "/website"],
+    attachmentsDir: "/uploads",
+  });
+  assert.equal(options.cwd, "/studio-worktree");
+  assert.deepEqual(options.additionalDirectories, [
+    "/admin",
+    "/website",
+    "/studio-worktree",
+    "/uploads",
+  ]);
+});

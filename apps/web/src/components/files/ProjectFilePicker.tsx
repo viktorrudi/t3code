@@ -1,3 +1,5 @@
+import { WorkspaceFolderPicker } from "./WorkspaceFolderPicker";
+import { folderFilePath } from "./workspaceFolders";
 import { useAtomValue } from "@effect/atom-react";
 import { useMemo, useState, type ReactNode } from "react";
 
@@ -70,11 +72,14 @@ function EmptyProjectFilePicker() {
 
 function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveProjectTarget }) {
   const { target } = props;
+  const [selectedRoot, setSelectedRoot] = useState<string | null>(null);
+  const roots = target.workspaceRoots ?? [target.cwd];
+  const cwd = selectedRoot && roots.includes(selectedRoot) ? selectedRoot : target.cwd;
   const [query, setQuery] = useState("");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const result = useProjectFilePickerQuery(
     target.environmentId,
-    target.cwd,
+    cwd,
     query,
     PROJECT_FILE_PICKER_RESULT_LIMIT,
   );
@@ -107,10 +112,12 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
         ),
         icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
         run: async () => {
-          useRightPanelStore.getState().openFile(target.threadRef, match.path);
+          useRightPanelStore
+            .getState()
+            .openFile(target.threadRef, folderFilePath(cwd, match.path, target.cwd));
         },
       })),
-    [hasMatchedQuery, matches, resolvedTheme, target.threadRef],
+    [hasMatchedQuery, matches, resolvedTheme, target.threadRef, cwd, target.cwd],
   );
 
   const emptyStateMessage = getEmptyStateMessage(query, result.error, result.isPending);
@@ -134,6 +141,7 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
       testId="project-file-picker"
       value={query}
     >
+      <WorkspaceFolderPicker roots={roots} value={cwd} onChange={setSelectedRoot} />
       <CommandPaletteResults
         groups={
           items.length > 0 ? [{ value: "project-files", label: target.projectName, items }] : []

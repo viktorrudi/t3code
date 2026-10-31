@@ -182,6 +182,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // Project creation records no model default (only an update does), so
         // reject what this mode would otherwise drop silently.
         if (
+          input.additionalWorkspaceRoots !== undefined ||
           input.scripts !== undefined ||
           input.createWorkspaceRootIfMissing !== undefined ||
           input.defaultModelSelection !== undefined

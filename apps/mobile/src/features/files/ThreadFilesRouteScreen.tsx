@@ -1,12 +1,18 @@
+import { AppText as Text } from "../../components/AppText";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Platform, View } from "react-native";
+import { Platform, Pressable, ScrollView as HorizontalScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-import { EnvironmentId, type ProjectReadFileResult, ThreadId } from "@t3tools/contracts";
+import {
+  getProjectWorkspaceRoots,
+  EnvironmentId,
+  type ProjectReadFileResult,
+  ThreadId,
+} from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
   isWorkspaceBrowserPreviewPath,
@@ -370,9 +376,19 @@ function useThreadFilesWorkspace(params: {
   const project = selectedThreadProject as {
     readonly title?: string;
     readonly workspaceRoot?: string;
+    readonly additionalWorkspaceRoots?: ReadonlyArray<string>;
   } | null;
 
   return {
+    workspaceRoots: project?.workspaceRoot
+      ? getProjectWorkspaceRoots(
+          {
+            workspaceRoot: project.workspaceRoot,
+            additionalWorkspaceRoots: project.additionalWorkspaceRoots,
+          },
+          selectedThreadCwd,
+        )
+      : [],
     cwd: routeCwd ?? selectedThreadCwd ?? project?.workspaceRoot ?? null,
     environmentId,
     projectName: routeProjectName ?? project?.title ?? "Files",
@@ -428,9 +444,10 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { fileInspector, layout, showAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
-  const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
-    props.route.params,
-  );
+  const workspace = useThreadFilesWorkspace(props.route.params);
+  const { environmentId, projectName, selectedThread, threadId, workspaceRoots } = workspace;
+  const [selectedRoot, setSelectedRoot] = useState<string | null>(null);
+  const cwd = selectedRoot && workspaceRoots.includes(selectedRoot) ? selectedRoot : workspace.cwd;
   const revealedInspectorRef = useRef(false);
   const fileAccessSession = useEnvironmentQuery(
     environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
@@ -563,6 +580,34 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         onRefresh={entriesQuery.refresh}
         onBack={handleReturnToThread}
       />
+      {workspaceRoots.length > 1 ? (
+        <HorizontalScrollView
+          horizontal
+          className="max-h-14"
+          contentContainerStyle={{ paddingHorizontal: 16, gap: 16 }}
+        >
+          {workspaceRoots.map((root) => (
+            <Pressable
+              key={root}
+              accessibilityRole="tab"
+              accessibilityLabel={root}
+              accessibilityState={{ selected: root === cwd }}
+              onPress={() => setSelectedRoot(root)}
+              className="min-h-11 justify-center"
+            >
+              <Text
+                className={
+                  root === cwd
+                    ? "text-sm font-t3-semibold text-primary-text"
+                    : "text-sm text-foreground-muted"
+                }
+              >
+                {root.split(/[\\/]/).filter(Boolean).at(-1) ?? root}
+              </Text>
+            </Pressable>
+          ))}
+        </HorizontalScrollView>
+      ) : null}
       <MaterialScreenContent insetHorizontal={layout.usesSplitView}>
         <FileTreeBrowser
           key={JSON.stringify([environmentId, cwd])}

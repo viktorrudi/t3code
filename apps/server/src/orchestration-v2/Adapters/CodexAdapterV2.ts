@@ -718,10 +718,22 @@ export function buildCodexTurnStartParams(input: {
       input.runtimePolicy.approvalPolicy === undefined
         ? runtimeModeDefaults.approvalPolicy
         : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
-    const sandboxPolicy =
+    const baseSandboxPolicy =
       input.runtimePolicy.sandboxPolicy === undefined
         ? runtimeModeDefaults.sandboxPolicy
         : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
+    const sandboxPolicy =
+      baseSandboxPolicy?.type === "workspaceWrite"
+        ? {
+            ...baseSandboxPolicy,
+            writableRoots: [
+              ...new Set([
+                ...(baseSandboxPolicy.writableRoots ?? []),
+                ...(input.runtimePolicy.additionalWorkspaceRoots ?? []),
+              ]),
+            ],
+          }
+        : baseSandboxPolicy;
     const selectedEffort = getModelSelectionStringOptionValue(
       input.modelSelection,
       "reasoningEffort",

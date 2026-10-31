@@ -157,6 +157,7 @@ describe("V2 environment commands", () => {
         projectId: ProjectId.make("project-1"),
         title: "Project",
         workspaceRoot: "/workspace/project",
+        additionalWorkspaceRoots: ["/workspace/admin"],
         createWorkspaceRootIfMissing: true,
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
@@ -167,6 +168,7 @@ describe("V2 environment commands", () => {
           projectId: "project-1",
           title: "Project",
           workspaceRoot: "/workspace/project",
+          additionalWorkspaceRoots: ["/workspace/admin"],
           createWorkspaceRootIfMissing: true,
         },
       ]);
@@ -182,6 +184,7 @@ describe("V2 environment commands", () => {
       yield* updateProject({
         projectId,
         autoPull: true,
+        additionalWorkspaceRoots: ["/admin"],
         projectIcon,
         faviconPath: "/workspace/project/icon.png",
         defaultThreadEnvMode: "worktree",
@@ -189,6 +192,7 @@ describe("V2 environment commands", () => {
       yield* updateProject({
         projectId,
         autoPull: false,
+        additionalWorkspaceRoots: [],
         projectIcon: null,
         faviconPath: null,
         defaultThreadEnvMode: null,
@@ -200,6 +204,7 @@ describe("V2 environment commands", () => {
           commandId: "00000000-0000-4000-8000-000000000000",
           projectId,
           autoPull: true,
+          additionalWorkspaceRoots: ["/admin"],
           projectIcon,
           faviconPath: "/workspace/project/icon.png",
           defaultThreadEnvMode: "worktree",
@@ -209,6 +214,7 @@ describe("V2 environment commands", () => {
           commandId: "00000000-0000-4000-8000-000000000000",
           projectId,
           autoPull: false,
+          additionalWorkspaceRoots: [],
           projectIcon: null,
           faviconPath: null,
           defaultThreadEnvMode: null,

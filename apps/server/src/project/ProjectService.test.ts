@@ -1,3 +1,4 @@
+import { projectMutationOperation } from "./ProjectMutation.ts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
@@ -26,7 +27,15 @@ import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const layerWorkspacePaths = Layer.succeed(WorkspacePaths.WorkspacePaths, {
-  normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot.replace(/\/$/, "")),
+  normalizeWorkspaceRoot: (workspaceRoot) =>
+    workspaceRoot === "/missing-folder"
+      ? Effect.fail(
+          new WorkspacePaths.WorkspaceRootNotExistsError({
+            workspaceRoot,
+            normalizedWorkspaceRoot: workspaceRoot,
+          }),
+        )
+      : Effect.succeed(workspaceRoot.replace(/\/$/, "")),
   resolveRelativePathWithinRoot: ({ workspaceRoot, relativePath }) =>
     Effect.succeed({ absolutePath: `${workspaceRoot}/${relativePath}`, relativePath }),
 });
@@ -798,3 +807,77 @@ it.effect("rejects an update that waited on the lock while its project was delet
     );
   }).pipe(Effect.provide(layerProjectServiceDependencies)),
 );
+
+it.layer(layerTest)("ProjectService attached folders", (it) => {
+  it.effect(
+    "persists attached folders, changes primary, removes folders, and preserves unrelated settings",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ProjectService.ProjectService;
+        const projectId = ProjectId.make("project:folders");
+        const created = yield* projectMutationOperation(service, {
+          type: "project.create",
+          commandId: CommandId.make("folders:create"),
+          projectId,
+          title: "Threadwise",
+          workspaceRoot: "/studio/",
+          additionalWorkspaceRoots: ["/admin/", "/website", "/admin", "/studio"],
+        });
+        assert.deepEqual(created.additionalWorkspaceRoots, ["/admin", "/website"]);
+        const promoted = yield* projectMutationOperation(service, {
+          type: "project.update",
+          commandId: CommandId.make("folders:promote"),
+          projectId,
+          workspaceRoot: "/admin",
+          additionalWorkspaceRoots: ["/studio", "/website"],
+        });
+        assert.equal(promoted.workspaceRoot, "/admin");
+        assert.deepEqual(promoted.additionalWorkspaceRoots, ["/studio", "/website"]);
+        yield* service.update({
+          commandId: CommandId.make("folders:rename"),
+          projectId,
+          title: "Renamed",
+        });
+        assert.deepEqual(
+          Option.getOrThrow(yield* service.getById(projectId)).additionalWorkspaceRoots,
+          ["/studio", "/website"],
+        );
+        yield* service.update({
+          commandId: CommandId.make("folders:remove"),
+          projectId,
+          additionalWorkspaceRoots: [],
+        });
+        const stored = yield* service.getById(projectId);
+        assert.deepEqual(Option.getOrThrow(stored).additionalWorkspaceRoots, []);
+        assert.equal(Option.getOrThrow(stored).title, "Renamed");
+      }),
+  );
+});
+
+it.layer(layerTest)("ProjectService invalid attached folder", (it) => {
+  it.effect("rejects a missing folder without changing the saved membership", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const projectId = ProjectId.make("project:invalid-folder");
+      yield* service.create({
+        commandId: CommandId.make("invalid-folder:create"),
+        projectId,
+        title: "Project",
+        workspaceRoot: "/studio",
+        additionalWorkspaceRoots: ["/admin"],
+      });
+      const result = yield* service
+        .update({
+          commandId: CommandId.make("invalid-folder:update"),
+          projectId,
+          additionalWorkspaceRoots: ["/missing-folder"],
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      assert.deepEqual(
+        Option.getOrThrow(yield* service.getById(projectId)).additionalWorkspaceRoots,
+        ["/admin"],
+      );
+    }),
+  );
+});

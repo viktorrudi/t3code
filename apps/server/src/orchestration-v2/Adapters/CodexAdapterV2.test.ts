@@ -9141,3 +9141,30 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     );
   });
 });
+
+it.effect("grants attached project folders only in the writable Codex sandbox", () =>
+  Effect.gen(function* () {
+    for (const runtimeMode of ["auto-accept-edits", "approval-required", "full-access"] as const) {
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        nativeThreadId: "attached-folders",
+        codexInput: [{ type: "text", text: "edit both" }],
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" },
+        runtimePolicy: {
+          runtimeMode,
+          interactionMode: "default",
+          cwd: "/studio-worktree",
+          additionalWorkspaceRoots: ["/admin", "/website"],
+        },
+      });
+      if (runtimeMode === "auto-accept-edits") {
+        assert.equal(params.sandboxPolicy?.type, "workspaceWrite");
+        if (params.sandboxPolicy?.type === "workspaceWrite")
+          assert.deepEqual(params.sandboxPolicy.writableRoots, ["/admin", "/website"]);
+      } else
+        assert.equal(
+          params.sandboxPolicy?.type,
+          runtimeMode === "full-access" ? "dangerFullAccess" : "readOnly",
+        );
+    }
+  }),
+);

@@ -166,6 +166,9 @@ export const Project = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  additionalWorkspaceRoots: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(31)),
+  ),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   projectIcon: Schema.optional(Schema.NullOr(ReceivedProjectIcon)),
@@ -199,6 +202,9 @@ export type ProjectChange = typeof ProjectChange.Type;
 export const ProjectCreatePayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  additionalWorkspaceRoots: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(31)),
+  ),
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
@@ -208,6 +214,9 @@ export type ProjectCreatePayload = typeof ProjectCreatePayload.Type;
 export const ProjectUpdatePayload = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  additionalWorkspaceRoots: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(31)),
+  ),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   autoPull: Schema.optional(Schema.Boolean),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
@@ -561,4 +570,21 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
         `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`,
     } as any);
   }
+}
+
+/** The worktree replaces the primary checkout; attached folders stay available. */
+export function getProjectWorkspaceRoots(
+  project: {
+    readonly workspaceRoot: string;
+    readonly additionalWorkspaceRoots?: ReadonlyArray<string> | undefined;
+  },
+  worktreePath?: string | null,
+): ReadonlyArray<string> {
+  const primary = worktreePath ?? project.workspaceRoot;
+  return [
+    ...new Set([
+      primary,
+      ...(project.additionalWorkspaceRoots ?? []).filter((root) => root !== project.workspaceRoot),
+    ]),
+  ];
 }

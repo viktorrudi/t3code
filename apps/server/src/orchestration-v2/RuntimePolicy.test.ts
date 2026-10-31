@@ -94,6 +94,7 @@ const layerTest = RuntimePolicy.layerFromProjectStore.pipe(
             projectId,
             title: "Project",
             workspaceRoot: "/project-root",
+            additionalWorkspaceRoots: ["/admin", "/docs"],
             defaultModelSelection: null,
             defaultThreadEnvMode: null,
             autoPull: false,
@@ -119,6 +120,7 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
         modelSelection,
       });
       assert.equal(resolved.cwd, "/project-root");
+      assert.deepEqual(resolved.additionalWorkspaceRoots, ["/admin", "/docs"]);
     }),
   );
 
@@ -131,6 +133,7 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
         modelSelection,
       });
       assert.equal(resolved.cwd, "/project-worktree");
+      assert.deepEqual(resolved.additionalWorkspaceRoots, ["/admin", "/docs"]);
     }),
   );
 
