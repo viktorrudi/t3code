@@ -1597,17 +1597,17 @@ describe("sortProjectsForSidebar", () => {
     ]);
   });
 
-  it("falls back to project timestamps when a project has no threads", () => {
+  it("orders unused projects by name instead of their import timestamps", () => {
     const sorted = sortProjectsForSidebar(
       [
         makeProject({
           id: ProjectId.make("project-1"),
-          title: "Older project",
+          title: "Alpha",
           updatedAt: "2026-03-09T10:01:00.000Z",
         }),
         makeProject({
           id: ProjectId.make("project-2"),
-          title: "Newer project",
+          title: "Beta",
           updatedAt: "2026-03-09T10:05:00.000Z",
         }),
       ],
@@ -1616,8 +1616,8 @@ describe("sortProjectsForSidebar", () => {
     );
 
     expect(sorted.map((project) => project.id)).toEqual([
-      ProjectId.make("project-2"),
       ProjectId.make("project-1"),
+      ProjectId.make("project-2"),
     ]);
   });
 
@@ -1703,7 +1703,7 @@ describe("sortProjectsForSidebar", () => {
     (sortOrder) => {
       const minute = (value: number) => `2026-03-09T10:0${value}:00.000Z`;
       // (index * 7) % 24 scrambles the input order. Titles repeat, and
-      // projects 16-23 have no threads, so they use their own stamps.
+      // projects 16-23 have no threads, so only creation order uses their stamps.
       const projects = Array.from({ length: 24 }, (_, index) => {
         const n = (index * 7) % 24;
         return makeProject({
@@ -1741,14 +1741,24 @@ describe("sortProjectsForSidebar", () => {
     },
   );
 
-  it("returns the project timestamp when no threads are present", () => {
+  it("does not count project edits as user-message activity", () => {
     const timestamp = getProjectSortTimestamp(
       makeProject({ updatedAt: "2026-03-09T10:10:00.000Z" }),
       [],
       "updated_at",
     );
 
-    expect(timestamp).toBe(Date.parse("2026-03-09T10:10:00.000Z"));
+    expect(timestamp).toBe(Number.NEGATIVE_INFINITY);
+  });
+
+  it("keeps project creation order available when there are no threads", () => {
+    expect(
+      getProjectSortTimestamp(
+        makeProject({ createdAt: "2026-03-09T10:10:00.000Z" }),
+        [],
+        "created_at",
+      ),
+    ).toBe(Date.parse("2026-03-09T10:10:00.000Z"));
   });
 });
 
@@ -1823,6 +1833,37 @@ describe("sortScopedProjectsForSidebar", () => {
 });
 
 describe("sortLogicalProjectsForSidebar", () => {
+  it("puts recently used projects above newly imported projects in the project picker", () => {
+    const projects = [
+      { id: "unused", title: "A newly imported project", updatedAt: "2026-10-31T19:00:00.000Z" },
+      { id: "older", title: "Older conversation", updatedAt: "2026-10-31T19:30:00.000Z" },
+      { id: "recent", title: "Recent conversation", updatedAt: "2026-10-01T10:00:00.000Z" },
+    ].map(({ id, ...project }) => ({
+      ...makeProject({ ...project, id: ProjectId.make(id) }),
+      projectKey: id,
+      memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: ProjectId.make(id) }],
+    }));
+    const threads = [
+      makeThread({
+        projectId: ProjectId.make("older"),
+        latestUserMessageAt: "2026-10-30T10:00:00.000Z",
+        updatedAt: "2026-10-31T20:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("recent-thread"),
+        projectId: ProjectId.make("recent"),
+        latestUserMessageAt: "2026-10-31T10:00:00.000Z",
+        updatedAt: "2026-10-31T10:00:00.000Z",
+      }),
+    ];
+
+    expect(
+      sortLogicalProjectsForSidebar(projects, threads, "updated_at").map(
+        (project) => project.projectKey,
+      ),
+    ).toEqual(["recent", "older", "unused"]);
+  });
+
   it("uses saved order only in manual mode and activity order otherwise", () => {
     const olderProjectId = ProjectId.make("project-older");
     const newerProjectId = ProjectId.make("project-newer");

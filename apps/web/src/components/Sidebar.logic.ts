@@ -1300,7 +1300,9 @@ export function getProjectSortTimestamp(
   if (sortOrder === "created_at") {
     return toSortableTimestamp(project.createdAt) ?? Number.NEGATIVE_INFINITY;
   }
-  return toSortableTimestamp(project.updatedAt ?? project.createdAt) ?? Number.NEGATIVE_INFINITY;
+  // Importing or editing a project is not conversation activity. Keep unused
+  // projects available below the projects the user has actually worked in.
+  return Number.NEGATIVE_INFINITY;
 }
 
 function sortProjectsByActivity<TProject extends SidebarProject>(
