@@ -79,7 +79,11 @@ import Migration0073 from "./Migrations/073_ActiveTurnItemIndexes.ts";
 import Migration0074 from "./Migrations/074_ExcludeAttachmentPlaceholdersFromSearch.ts";
 import Migration0075 from "./Migrations/075_SubagentDeliveryState.ts";
 import Migration0076 from "./Migrations/076_ProjectionProjectsPinArchive.ts";
-import Migration0077 from "./Migrations/077_ProjectAttachedFolders.ts";
+import Migration0077 from "./Migrations/077_RepairBooleanSettledOverride.ts";
+import Migration0078 from "./Migrations/078_DropOrchestrationEventCorrelationIndex.ts";
+
+import Migration0079 from "./Migrations/079_DelegatedRecoveryIndexes.ts";
+import Migration0080 from "./Migrations/080_ProjectAttachedFolders.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -159,7 +163,10 @@ const migrationEntries = [
   [74, "ExcludeAttachmentPlaceholdersFromSearch", Migration0074],
   [75, "SubagentDeliveryState", Migration0075],
   [76, "ProjectionProjectsPinArchive", Migration0076],
-  [77, "ProjectAttachedFolders", Migration0077],
+  [77, "RepairBooleanSettledOverride", Migration0077],
+  [78, "DropOrchestrationEventCorrelationIndex", Migration0078],
+  [79, "DelegatedRecoveryIndexes", Migration0079],
+  [80, "ProjectAttachedFolders", Migration0080],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -208,8 +215,10 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
   });
 });
 
-// The fork used id 61 before upstream; retain its column and free the id for upstream's schema.
-const reconcileProjectAttachedFolders = Effect.fn("reconcileProjectAttachedFolders")(function* () {
+// Released fork builds used ids 61 and 77; retain their column and free upstream's ids.
+const reconcileProjectAttachedFolders = Effect.fn("reconcileProjectAttachedFolders")(function* (
+  throughId?: number,
+) {
   const sql = yield* SqlClient.SqlClient;
   const tables =
     yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
@@ -218,7 +227,13 @@ const reconcileProjectAttachedFolders = Effect.fn("reconcileProjectAttachedFolde
     readonly migration_id: number;
     readonly name: string;
   }>`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id DESC LIMIT 1`;
-  if (recorded[0]?.migration_id !== 61 || recorded[0]?.name !== "ProjectAttachedFolders") return;
+  const legacyId = recorded[0]?.migration_id;
+  if (
+    recorded[0]?.name !== "ProjectAttachedFolders" ||
+    (legacyId !== 61 && legacyId !== 77) ||
+    (throughId !== undefined && throughId < legacyId)
+  )
+    return;
   const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(projection_projects)`;
   if (!columns.some((column) => column.name === "additional_workspace_roots_json")) {
     return yield* new Migrator.MigrationError({
@@ -226,7 +241,7 @@ const reconcileProjectAttachedFolders = Effect.fn("reconcileProjectAttachedFolde
       message: "ProjectAttachedFolders is recorded without its workspace column.",
     });
   }
-  yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 61 AND name = 'ProjectAttachedFolders'`;
+  yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = ${legacyId} AND name = 'ProjectAttachedFolders'`;
 });
 
 const run = Migrator.make({});
@@ -243,7 +258,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
   if (includesV2) {
     if (toMigrationInclusive === undefined || toMigrationInclusive >= 61) {
-      yield* reconcileProjectAttachedFolders();
+      yield* reconcileProjectAttachedFolders(toMigrationInclusive);
     }
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
