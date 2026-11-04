@@ -35,6 +35,7 @@ export type SettingsPath =
   | "/settings/access"
   | "/settings/secrets"
   | "/settings/maintenance"
+  | "/settings/personal"
   | "/settings/labs"
   | "/settings/about"
   | "/settings/archived";
@@ -105,6 +106,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/access": "Sharing & access",
   "/settings/secrets": "Secrets",
   "/settings/maintenance": "Maintenance",
+  "/settings/personal": "Personal customizations",
   "/settings/labs": "Labs",
   "/settings/about": "About",
   "/settings/archived": "Archive",
@@ -150,7 +152,13 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   },
   {
     heading: null,
-    paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
+    paths: [
+      "/settings/personal",
+      "/settings/maintenance",
+      "/settings/labs",
+      "/settings/about",
+      "/settings/archived",
+    ],
   },
 ];
 
@@ -452,6 +460,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Working section",
     to: "/settings/general",
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
+  },
+  {
+    id: "model-mentions",
+    title: "Use @ to reference models",
+    to: "/settings/personal",
+    searchTerms: ["models", "mentions", "files", "personal", "customizations", "subagent", "@"],
   },
   {
     id: "boring-sidebar",
@@ -1211,6 +1225,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/secrets": null,
   "/settings/scheduled-tasks": null,
   "/settings/maintenance": null,
+  "/settings/personal": null,
   "/settings/labs": null,
   "/settings/about": null,
   "/settings/archived": "project-defaults",

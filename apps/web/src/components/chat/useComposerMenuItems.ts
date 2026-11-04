@@ -1,3 +1,7 @@
+import { modelMentionMatches, modelMentionKey } from "../../personal/modelMentions";
+import type { AppModelOption } from "../../modelSelection";
+import type { ProviderInstanceEntry } from "../../providerInstances";
+import type { ProviderInstanceId } from "@t3tools/contracts";
 import {
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
@@ -56,6 +60,7 @@ const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<Pull
 /** Builds the @, /, $ and # suggestion lists, running the searches each trigger needs. */
 export function useComposerMenuItems({
   composerTrigger,
+  modelSearch,
   environmentId,
   linkedEnvironments,
   gitCwd,
@@ -75,6 +80,12 @@ export function useComposerMenuItems({
   questionAttachmentTarget,
 }: {
   readonly composerTrigger: ComposerTrigger | null;
+  readonly modelSearch: null | {
+    entries: ReadonlyArray<ProviderInstanceEntry>;
+    modelOptions: ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>;
+    projectTitle: string | null;
+    recentKeys: ReadonlyArray<string>;
+  };
   readonly environmentId: EnvironmentId;
   readonly linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
   readonly gitCwd: string | null;
@@ -108,7 +119,7 @@ export function useComposerMenuItems({
   const debouncedPullRequestTextQuery = useDebouncedValue(pullRequestTextQuery, 180);
   const settledPullRequestTextQuery =
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
-  const isPathTrigger = composerTriggerKind === "path";
+  const isPathTrigger = composerTriggerKind === "path" && modelSearch === null;
   const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
   // Mounts older settled threads matching the mention, which shells may leave out.
   useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
@@ -187,6 +198,17 @@ export function useComposerMenuItems({
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
+      if (modelSearch)
+        return modelMentionMatches({ ...modelSearch, query: composerTrigger.query }).map(
+          (model) => ({
+            id: `model:${modelMentionKey(model)}`,
+            type: "model",
+            model,
+            entry: model.entry,
+            label: model.name,
+            description: model.providerName,
+          }),
+        );
       return [
         ...matchComposerThreadItems({
           shells: environmentThreadShells,
@@ -374,7 +396,7 @@ export function useComposerMenuItems({
     return [];
   })();
   const isLoading =
-    (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    (isPathTrigger && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
     ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
       workspaceSkillsScanning) ||
     (composerTriggerKind === "pull-request" &&
@@ -403,7 +425,9 @@ export function useComposerMenuItems({
         : "No pull requests found in this repository.";
     }
     return composerTriggerKind === "path"
-      ? "No matching files or folders."
+      ? modelSearch
+        ? "No matching enabled models for this project."
+        : "No matching files or folders."
       : "No matching command.";
   })();
 

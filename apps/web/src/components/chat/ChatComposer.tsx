@@ -1,3 +1,6 @@
+import { useAtSearchMode, useRecentModelMentions } from "../../personal/personalSettings";
+import { modelMentionKey, serializeModelMention } from "../../personal/modelMentions";
+import { useProject } from "../../state/entities";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -1135,12 +1138,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerPreviewAnnotations.length === 0 &&
     composerReviewComments.length === 0;
   const linkedEnvironments = useLinkedEnvironments(environmentId);
+  const [atSearchMode] = useAtSearchMode();
+  const modelMentionRecents = useRecentModelMentions(environmentId);
+  const mentionProject = useProject(
+    activeProjectId === null ? null : { environmentId, projectId: activeProjectId },
+  );
   const {
     items: composerMenuItems,
     isLoading: isComposerMenuLoading,
     emptyState: composerMenuEmptyState,
   } = useComposerMenuItems({
     composerTrigger,
+    modelSearch:
+      atSearchMode === "models"
+        ? {
+            entries:
+              activeProjectId !== null && mentionProject === null ? [] : providerInstanceEntries,
+            modelOptions: modelOptionsByInstance,
+            projectTitle: mentionProject?.title ?? null,
+            recentKeys: modelMentionRecents.recentKeys,
+          }
+        : null,
     environmentId,
     linkedEnvironments,
     gitCwd,
@@ -1852,6 +1870,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
     const { snapshot, trigger } = resolveActiveComposerTrigger();
     if (!trigger) return;
+    if (item.type === "model") {
+      if (
+        trigger.kind !== "path" ||
+        !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
+      )
+        return;
+      const replacement = `${serializeModelMention(item.model)} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        modelMentionRecents.remember(modelMentionKey(item.model));
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
     if (item.type === "path") {
       if (!isPathSuggestionCurrent(item.searchTarget, trigger, environmentId, gitCwd)) return;
       const replacement = `${serializeComposerFileLink(item.path)} `;
@@ -2534,7 +2573,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         toastManager.add({
           type: "error",
           title: `Couldn't get the path of "${folder.name}"`,
-          description: "Type the folder path with @ instead.",
+          description:
+            atSearchMode === "models"
+              ? "Turn off model references in Personal customizations to search for the folder with @."
+              : "Type the folder path with @ instead.",
         });
         continue;
       }

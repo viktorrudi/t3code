@@ -1,3 +1,6 @@
+import type { ModelMention } from "../../personal/modelMentions";
+import type { ProviderInstanceEntry } from "../../providerInstances";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import {
@@ -35,6 +38,14 @@ import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 
 export type ComposerCommandItem =
+  | {
+      id: string;
+      type: "model";
+      model: ModelMention;
+      entry: ProviderInstanceEntry;
+      label: string;
+      description: string;
+    }
   | {
       id: string;
       type: "path";
@@ -130,7 +141,13 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         {props.items.length > 0 ? (
           <CommandList
             id={props.listId}
-            aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
+            aria-label={
+              props.items[0]?.type === "model"
+                ? "Model suggestions"
+                : props.triggerKind
+                  ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind]
+                  : undefined
+            }
             className="max-h-72 min-h-0 scroll-pb-6"
           >
             <CommandGroup>
@@ -204,6 +221,16 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         props.onSelect(props.item);
       }}
     >
+      {props.item.type === "model" ? (
+        <ProviderInstanceIcon
+          driverKind={props.item.entry.driverKind}
+          displayName={props.item.entry.displayName}
+          accentColor={props.item.entry.accentColor}
+          acpRegistryAgentId={props.item.entry.acpRegistryAgentId}
+          acpRegistryIconUrl={props.item.entry.acpRegistryIconUrl}
+          size="compact"
+        />
+      ) : null}
       {props.item.type === "path" ? (
         <PierreEntryIcon
           pathValue={props.item.path}
