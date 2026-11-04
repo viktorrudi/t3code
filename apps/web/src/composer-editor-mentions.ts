@@ -1,3 +1,4 @@
+import { collectModelMentions } from "./personal/modelMentions";
 import type { AssistantCitation } from "@t3tools/contracts";
 import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
@@ -78,7 +79,7 @@ function forEachMentionMatch(
 export function collectComposerPromptInlineTokens(text: string) {
   const tokens = collectComposerInlineTokens(text);
   const citations = collectAssistantCitations(text);
-  const references = collectComposerContextReferences(text);
+  const references = [...collectComposerContextReferences(text), ...collectModelMentions(text)];
   if (citations.length === 0 && references.length === 0) return tokens;
 
   // An unfinished @ mention can otherwise consume the start of a link label.

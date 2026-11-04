@@ -1,3 +1,5 @@
+import { ModelMentionChip } from "../personal/ModelMentionChip";
+import { parseModelMentionSource } from "../personal/modelMentions";
 import { documentChipKindForFileName } from "~/pierre-icons";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
@@ -511,13 +513,19 @@ const ComposerContextReferenceExtension = Node.create({
 });
 
 function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
+  const source = typeof node.attrs.source === "string" ? node.attrs.source : "";
+  const model = node.attrs.kind === "model" ? parseModelMentionSource(source) : null;
   return (
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
-      <ComposerContextReferenceChip
-        kind={(node.attrs.kind as string) ?? ""}
-        contextId={(node.attrs.contextId as string) ?? ""}
-        label={(node.attrs.label as string) ?? ""}
-      />
+      {model ? (
+        <ModelMentionChip model={model} />
+      ) : (
+        <ComposerContextReferenceChip
+          kind={(node.attrs.kind as string) ?? ""}
+          contextId={(node.attrs.contextId as string) ?? ""}
+          label={(node.attrs.label as string) ?? ""}
+        />
+      )}
     </NodeViewWrapper>
   );
 }

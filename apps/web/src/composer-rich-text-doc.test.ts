@@ -1,3 +1,5 @@
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { serializeModelMention } from "./personal/modelMentions";
 import { Editor, getSchemaByResolvedExtensions, Node, resolveExtensions } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { TaskList } from "@tiptap/extension-task-list";
@@ -31,6 +33,14 @@ import {
   skillChipReplacements,
   stepCaretAcrossStyledEdge,
 } from "./composer-rich-text-doc";
+
+const modelReference = serializeModelMention({
+  instanceId: ProviderInstanceId.make("claude-sensoneo"),
+  driverKind: ProviderDriverKind.make("claudeAgent"),
+  providerName: "Claude Sensoneo",
+  name: "Claude Opus 5.5",
+  model: "claude-opus-5-5",
+});
 
 function stubAtom(name: string, attrs: Record<string, { default: unknown }>) {
   return Node.create({
@@ -273,6 +283,8 @@ describe("composer rich text document model", () => {
     "",
     "\n\n",
     "plain text",
+    modelReference,
+    `Use ${modelReference} with @README.md and $my-skill please`,
     "hello **bold** world",
     "a *italic* word and `code` here",
     "struck ~~out~~ now",
@@ -452,6 +464,8 @@ describe("composer rich text document model", () => {
 
   it.each([
     "plain text",
+    modelReference,
+    `Use ${modelReference} with @README.md and $my-skill please`,
     "hello **bold** stays literal",
     "a *italic* stays literal",
     "some `code` stays literal",
