@@ -77,6 +77,16 @@ describe("model mentions", () => {
         (model) => model.instanceId,
       ),
     ).toEqual(["claude-sensoneo", "litellm-sensoneo"]);
+    for (const projectTitle of ["Sensoneo", " sensoneo ", "SENSONEO"]) {
+      expect(
+        modelMentionMatches({ ...input, projectTitle }).map((model) => model.instanceId),
+      ).toEqual(["claude-sensoneo", "litellm-sensoneo"]);
+      expect(
+        modelMentionMatches({ ...input, projectTitle, query: "litellm blaze" }).map(
+          (model) => model.model,
+        ),
+      ).toEqual(["blaze"]);
+    }
     expect(modelMentionMatches({ ...input, query: "litellm" })).toEqual([]);
     expect(
       modelMentionMatches({
@@ -97,8 +107,7 @@ describe("model mentions", () => {
       "sonnet-5.5",
     );
     expect(
-      modelMentionMatches({ ...input, recentKeys, projectTitle: "Sensoneo Frontend" })[0]
-        ?.instanceId,
+      modelMentionMatches({ ...input, recentKeys, projectTitle: "Sensoneo" })[0]?.instanceId,
     ).toBe("claude-sensoneo");
   });
 
