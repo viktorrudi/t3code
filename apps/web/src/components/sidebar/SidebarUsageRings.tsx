@@ -2,25 +2,29 @@ import { useAtomValue } from "@effect/atom-react";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 
 import { primaryServerProvidersAtom } from "../../state/server";
+import { cn } from "../../lib/utils";
+import { ClaudeAI, OpenAI } from "../Icons";
 import { PROVIDER_PRESENTATION } from "../usage/usageProviders";
 import { readUsagePagePreferences, saveUsagePagePreferences } from "../usage/usagePagePreferences";
 import { SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { sidebarUsageRings, type SidebarUsageTrack } from "./SidebarUsageRings.logic";
 
-function UsageRing({
+function UsageIndicator({
   provider,
-  tracks,
+  track,
   onClick,
 }: {
   readonly provider: "codex" | "claude";
-  readonly tracks: readonly SidebarUsageTrack[];
+  readonly track: SidebarUsageTrack;
   readonly onClick: () => void;
 }) {
-  const title = provider === "codex" ? "Codex · Weekly" : "Claude · 5h";
-  const description = tracks
-    .map((track) => `${provider === "claude" ? `${track.label} ` : ""}${track.status}`)
-    .join(", ");
+  const title = provider === "codex" ? "Codex · Weekly" : `Claude ${track.label} · 5h`;
+  const Icon = provider === "codex" ? OpenAI : ClaudeAI;
+  const color =
+    provider === "codex" || track.instanceId === "claudeAgent"
+      ? PROVIDER_PRESENTATION.codex.color
+      : (normalizeProviderAccentColor(track.accentColor) ?? PROVIDER_PRESENTATION.claude.color);
   const openLimits = () => {
     saveUsagePagePreferences({ ...readUsagePagePreferences(), metric: "limits" });
     onClick();
@@ -31,58 +35,36 @@ function UsageRing({
         <TooltipTrigger
           render={
             <SidebarMenuButton
-              aria-label={`${title}: ${description}`}
+              aria-label={`${title}: ${track.status}`}
               onClick={openLimits}
               size="icon"
             >
-              <svg aria-hidden="true" className="size-[18px] -rotate-90" viewBox="0 0 18 18">
-                {tracks.map((track, index) => {
-                  const radius = index === 0 ? 7.75 : 5.25;
-                  const color =
-                    provider === "codex" || track.instanceId === "claudeAgent"
-                      ? PROVIDER_PRESENTATION.codex.color
-                      : (normalizeProviderAccentColor(track.accentColor) ??
-                        PROVIDER_PRESENTATION.claude.color);
-                  return (
-                    <g key={track.instanceId} fill="none" strokeWidth="1.5">
-                      <circle
-                        cx="9"
-                        cy="9"
-                        r={radius}
-                        className={track.signedOut ? "stroke-current/30" : "stroke-current/22"}
-                        strokeDasharray={track.signedOut ? "1.5 2" : undefined}
-                      />
-                      {track.percent !== null && track.percent > 0 ? (
-                        <circle
-                          cx="9"
-                          cy="9"
-                          r={radius}
-                          pathLength="100"
-                          stroke={color}
-                          strokeLinecap="round"
-                          strokeDasharray={track.percent === 100 ? undefined : "100"}
-                          strokeDashoffset={track.percent === 100 ? undefined : 100 - track.percent}
-                        />
-                      ) : null}
-                    </g>
-                  );
-                })}
-              </svg>
+              <span aria-hidden="true" className="relative size-7 shrink-0">
+                <Icon
+                  className={cn(
+                    "absolute top-0.5 left-0.5 size-5 fill-current",
+                    track.percent === null && "opacity-40",
+                  )}
+                  style={{ color }}
+                />
+                <span
+                  className={cn(
+                    "absolute right-0 bottom-0 min-w-5 rounded-sm bg-sidebar px-0.5 text-center text-3xs font-semibold leading-3.5 text-sidebar-foreground tabular-nums ring-1 ring-sidebar",
+                    track.percent === null && "text-sidebar-muted-foreground",
+                    track.percent !== null && track.percent <= 20 && "text-warning",
+                    track.percent === 0 && "text-destructive",
+                  )}
+                >
+                  {track.percent === null ? "?" : `${track.percent}%`}
+                </span>
+              </span>
             </SidebarMenuButton>
           }
         />
         <TooltipPopup side="top">
           <div className="space-y-1 tabular-nums">
             <div>{title}</div>
-            {tracks.map((track) => (
-              <div
-                key={track.instanceId}
-                className="flex items-center justify-between gap-4 text-muted-foreground"
-              >
-                {provider === "claude" ? <span>{track.label}</span> : null}
-                <span>{track.status}</span>
-              </div>
-            ))}
+            <div className="text-muted-foreground">{track.status}</div>
           </div>
         </TooltipPopup>
       </Tooltip>
@@ -95,10 +77,12 @@ export function SidebarUsageRings({ onClick }: { readonly onClick: () => void })
   const rings = sidebarUsageRings(providers);
   return (
     <>
-      {rings.codex ? <UsageRing provider="codex" tracks={[rings.codex]} onClick={onClick} /> : null}
-      {rings.claude.length > 0 ? (
-        <UsageRing provider="claude" tracks={rings.claude} onClick={onClick} />
+      {rings.codex ? (
+        <UsageIndicator provider="codex" track={rings.codex} onClick={onClick} />
       ) : null}
+      {rings.claude.map((track) => (
+        <UsageIndicator key={track.instanceId} provider="claude" track={track} onClick={onClick} />
+      ))}
     </>
   );
 }
