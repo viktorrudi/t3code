@@ -11,7 +11,7 @@ export interface ModelMention {
 }
 
 const SENSONEO_PROJECT_TITLES = new Set(["sensoneo", "sensoneo frontend"]);
-const SENSITIVE_INSTANCES = new Set(["claude-sensoneo", "litellm-sensoneo"]);
+const SENSITIVE_INSTANCES = new Set(["claude-sensoneo", "litellm-sensoneo", "cursor"]);
 const PREFIX = "t3-model://reference?";
 
 export function modelMentionKey(model: Pick<ModelMention, "instanceId" | "model">): string {

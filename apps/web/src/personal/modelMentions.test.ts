@@ -44,6 +44,7 @@ const entries = deriveProviderInstanceEntries([
   provider("codex", ["gpt-5.5"]),
   provider("claude-sensoneo", ["work-opus-5.5"]),
   provider("litellm-sensoneo", ["blaze"]),
+  { ...provider("cursor", ["grok-4.7"]), driver: ProviderDriverKind.make("cursor") },
   provider("disabled", ["disabled-5.5"], false),
 ]);
 const modelOptions = new Map(
@@ -76,11 +77,18 @@ describe("model mentions", () => {
       modelMentionMatches({ ...input, projectTitle: " Sensoneo Frontend " }).map(
         (model) => model.instanceId,
       ),
-    ).toEqual(["claude-sensoneo", "litellm-sensoneo"]);
+    ).toEqual(["claude-sensoneo", "litellm-sensoneo", "cursor"]);
     for (const projectTitle of ["Sensoneo", " sensoneo ", "SENSONEO"]) {
       expect(
         modelMentionMatches({ ...input, projectTitle }).map((model) => model.instanceId),
-      ).toEqual(["claude-sensoneo", "litellm-sensoneo"]);
+      ).toEqual(["claude-sensoneo", "litellm-sensoneo", "cursor"]);
+      expect(
+        modelMentionMatches({ ...input, projectTitle, query: "cursor grok" }).map((model) => [
+          model.instanceId,
+          model.driverKind,
+          model.model,
+        ]),
+      ).toEqual([["cursor", "cursor", "grok-4.7"]]);
       expect(
         modelMentionMatches({ ...input, projectTitle, query: "litellm blaze" }).map(
           (model) => model.model,
@@ -88,6 +96,9 @@ describe("model mentions", () => {
       ).toEqual(["blaze"]);
     }
     expect(modelMentionMatches({ ...input, query: "litellm" })).toEqual([]);
+    for (const projectTitle of [null, "Personal", "Sensoneo archive"]) {
+      expect(modelMentionMatches({ ...input, projectTitle, query: "cursor" })).toEqual([]);
+    }
     expect(
       modelMentionMatches({
         ...input,
