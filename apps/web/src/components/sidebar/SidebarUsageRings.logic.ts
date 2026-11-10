@@ -1,52 +1,85 @@
 import type { ServerProvider } from "@t3tools/contracts";
-import { remainingPercent } from "@t3tools/shared/usageLimits";
+import {
+  CURSOR_USAGE_WINDOWS,
+  formatDuration,
+  remainingPercent,
+} from "@t3tools/shared/usageLimits";
 
-// This fork keeps Personal on the outer track and Sensoneo on the inner track.
-const CLAUDE_INSTANCES = ["claudeAgent", "claude-sensoneo"] as const;
-
-function accountTrack(provider: ServerProvider, kind: "weekly" | "session") {
-  const window = provider.usageLimits?.windows.find((window) => window.kind === kind);
-  const percent =
-    provider.auth.status === "authenticated" &&
-    !provider.usageLimits?.unavailable &&
-    window &&
-    Number.isFinite(window.usedPercent)
-      ? remainingPercent(window)
-      : null;
-  const status =
-    percent !== null
-      ? `${percent}% left`
-      : provider.auth.status === "unauthenticated"
-        ? "Signed out"
-        : "Unavailable";
+function accountTrack(provider: ServerProvider, name: "Codex" | "Claude" | "Cursor") {
+  const reported = provider.usageLimits?.windows ?? [];
+  const selected =
+    name === "Cursor"
+      ? CURSOR_USAGE_WINDOWS.filter((window) => window.id !== "totalPercentUsed").map((window) => ({
+          label: `${window.label} · Monthly`,
+          window: reported.find((reported) => reported.id === window.id),
+        }))
+      : (name === "Codex" ? (["weekly"] as const) : (["session", "weekly"] as const)).map(
+          (kind) => ({
+            label: kind === "session" ? "5h" : "Weekly",
+            window: reported.find((window) => window.kind === kind),
+          }),
+        );
+  const windows = selected.map(({ label, window }) => {
+    const percent =
+      provider.auth.status === "authenticated" &&
+      !provider.usageLimits?.unavailable &&
+      window &&
+      Number.isFinite(window.usedPercent)
+        ? remainingPercent(window)
+        : null;
+    return {
+      label,
+      percent,
+      status:
+        percent !== null
+          ? `${percent}% left`
+          : provider.auth.status === "unauthenticated"
+            ? "Signed out"
+            : "Unavailable",
+      resetsAt: percent !== null && name !== "Cursor" ? window?.resetsAt : undefined,
+    };
+  });
   return {
     instanceId: provider.instanceId,
-    label: (provider.displayName ?? provider.auth.email ?? "Claude").replace(/^Claude\s+/i, ""),
-    accentColor: provider.accentColor,
-    percent,
-    status,
-    signedOut: provider.auth.status === "unauthenticated",
+    name,
+    windows,
+    checkedAt: provider.usageLimits?.checkedAt,
   };
 }
 
 export function sidebarUsageRings(providers: readonly ServerProvider[]) {
-  const enabled = providers.filter((provider) => provider.enabled);
+  const enabled = providers.filter(
+    (provider) => provider.enabled && provider.auth.type !== "customEndpoint",
+  );
   const codex =
     enabled.find((provider) => provider.driver === "codex" && provider.instanceId === "codex") ??
     enabled.find((provider) => provider.driver === "codex");
-  const claude = CLAUDE_INSTANCES.flatMap((instanceId) => {
-    const provider = enabled.find(
-      (provider) =>
-        provider.instanceId === instanceId &&
-        provider.driver === "claudeAgent" &&
-        provider.auth.type !== "customEndpoint",
-    );
-    return provider ? [accountTrack(provider, "session")] : [];
-  });
+  const personal = enabled.find(
+    (provider) => provider.driver === "claudeAgent" && provider.instanceId === "claudeAgent",
+  );
+  const sensoneo = enabled.find(
+    (provider) => provider.driver === "claudeAgent" && provider.instanceId === "claude-sensoneo",
+  );
+  const cursor =
+    enabled.find((provider) => provider.driver === "cursor" && provider.instanceId === "cursor") ??
+    enabled.find((provider) => provider.driver === "cursor");
   return {
-    codex: codex ? accountTrack(codex, "weekly") : null,
-    claude,
+    personal: [
+      ...(codex ? [accountTrack(codex, "Codex")] : []),
+      ...(personal ? [accountTrack(personal, "Claude")] : []),
+    ],
+    sensoneo: [
+      ...(sensoneo ? [accountTrack(sensoneo, "Claude")] : []),
+      ...(cursor ? [accountTrack(cursor, "Cursor")] : []),
+    ],
   };
+}
+
+export function sidebarUsageReset(resetsAt: string | undefined, now: number): string {
+  const reset = resetsAt ? Date.parse(resetsAt) : Number.NaN;
+  if (!Number.isFinite(reset)) return "?";
+  if (reset <= now) return "Due";
+  return reset - now < 60_000 ? "<1m" : formatDuration(reset - now);
 }
 
 export type SidebarUsageTrack = ReturnType<typeof accountTrack>;
