@@ -3,6 +3,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "../components/settings/settingsLayout";
+import { ChatWidthSettingsRow } from "../components/settings/ChatWidthSettingsRow";
 import { Switch } from "../components/ui/switch";
 import { useAtSearchMode } from "./personalSettings";
 
@@ -11,6 +12,7 @@ export function PersonalSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="personal-customizations" title="Personal customizations">
+        <ChatWidthSettingsRow />
         <SettingsRow
           id="model-mentions"
           title="Use @ to reference models"

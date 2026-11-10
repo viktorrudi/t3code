@@ -470,6 +470,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "personal-chat-width",
+    title: "Chat width",
+    to: "/settings/personal",
+    targetId: "chat-width",
+    searchTerms: ["wide full width column layout messages composer tables comfortable personal"],
+  },
+  {
     id: "model-mentions",
     title: "Use @ to reference models",
     to: "/settings/personal",

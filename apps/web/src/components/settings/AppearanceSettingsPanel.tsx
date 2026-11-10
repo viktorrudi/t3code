@@ -3,7 +3,6 @@ import { useState } from "react";
 import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
-  type ChatWidth,
   type EffortDisplay,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
@@ -36,6 +35,7 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
+import { ChatWidthSettingsRow } from "./ChatWidthSettingsRow";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -72,12 +72,6 @@ function environmentIdentificationOptions(
     ["dev-artwork", "Dev artwork"],
   ];
 }
-
-const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
-  comfortable: "Comfortable",
-  wide: "Wide",
-  full: "Full",
-};
 
 const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
   label: "Word",
@@ -257,38 +251,7 @@ export function AppearanceSettingsPanel() {
           }
         />
 
-        <SettingsRow
-          {...searchableSetting("chat-width")}
-          description="Set how wide messages and the composer can grow on large screens."
-          resetAction={
-            settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? (
-              <SettingResetButton
-                label="chat width"
-                onClick={() => updateSettings({ chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth })}
-              />
-            ) : null
-          }
-          control={
-            <div className="w-full sm:w-40">
-              <Select
-                value={settings.chatWidth}
-                onValueChange={(value) => {
-                  if (value === "comfortable" || value === "wide" || value === "full")
-                    updateSettings({ chatWidth: value });
-                }}
-              >
-                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Chat width">
-                  <SelectValue>{CHAT_WIDTH_LABELS[settings.chatWidth]}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="comfortable">Comfortable (default)</SelectItem>
-                  <SelectItem value="wide">Wide</SelectItem>
-                  <SelectItem value="full">Full</SelectItem>
-                </SelectPopup>
-              </Select>
-            </div>
-          }
-        />
+        <ChatWidthSettingsRow />
         <ThreadDetailsItemsRow />
         <SettingsRow
           {...searchableSetting("effort-display")}
