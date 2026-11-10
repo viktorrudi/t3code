@@ -81,9 +81,9 @@ import Migration0075 from "./Migrations/075_SubagentDeliveryState.ts";
 import Migration0076 from "./Migrations/076_ProjectionProjectsPinArchive.ts";
 import Migration0077 from "./Migrations/077_RepairBooleanSettledOverride.ts";
 import Migration0078 from "./Migrations/078_DropOrchestrationEventCorrelationIndex.ts";
-
 import Migration0079 from "./Migrations/079_DelegatedRecoveryIndexes.ts";
-import Migration0080 from "./Migrations/080_ProjectAttachedFolders.ts";
+import Migration0080 from "./Migrations/080_ScheduledTaskThreadMode.ts";
+import Migration0081 from "./Migrations/081_ProjectAttachedFolders.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -166,7 +166,8 @@ const migrationEntries = [
   [77, "RepairBooleanSettledOverride", Migration0077],
   [78, "DropOrchestrationEventCorrelationIndex", Migration0078],
   [79, "DelegatedRecoveryIndexes", Migration0079],
-  [80, "ProjectAttachedFolders", Migration0080],
+  [80, "ScheduledTaskThreadMode", Migration0080],
+  [81, "ProjectAttachedFolders", Migration0081],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -215,7 +216,7 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
   });
 });
 
-// Released fork builds used ids 61 and 77; retain their column and free upstream's ids.
+// Released fork builds used ids 61, 77 and 80; retain their column and free upstream's ids.
 const reconcileProjectAttachedFolders = Effect.fn("reconcileProjectAttachedFolders")(function* (
   throughId?: number,
 ) {
@@ -230,7 +231,7 @@ const reconcileProjectAttachedFolders = Effect.fn("reconcileProjectAttachedFolde
   const legacyId = recorded[0]?.migration_id;
   if (
     recorded[0]?.name !== "ProjectAttachedFolders" ||
-    (legacyId !== 61 && legacyId !== 77) ||
+    (legacyId !== 61 && legacyId !== 77 && legacyId !== 80) ||
     (throughId !== undefined && throughId < legacyId)
   )
     return;
