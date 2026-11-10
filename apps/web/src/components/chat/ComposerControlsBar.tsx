@@ -78,6 +78,7 @@ export function ComposerControlsBar(props: {
   lockedProvider: ChatComposerProps["lockedProvider"];
   lockedContinuationGroupKey: string | null;
   providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+  pickerInstanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   keybindings: ChatComposerProps["keybindings"];
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>;
   terminalOpen: boolean;
@@ -122,6 +123,7 @@ export function ComposerControlsBar(props: {
     lockedProvider,
     lockedContinuationGroupKey,
     providerInstanceEntries,
+    pickerInstanceEntries,
     keybindings,
     modelOptionsByInstance,
     terminalOpen,
@@ -206,6 +208,7 @@ export function ComposerControlsBar(props: {
       lockedProvider={lockedProvider}
       lockedContinuationGroupKey={lockedContinuationGroupKey}
       instanceEntries={providerInstanceEntries}
+      pickerInstanceEntries={pickerInstanceEntries}
       keybindings={keybindings}
       modelOptionsByInstance={modelOptionsByInstance}
       size={controlSize}

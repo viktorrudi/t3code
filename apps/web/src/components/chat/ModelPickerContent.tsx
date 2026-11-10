@@ -410,13 +410,20 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | "favorites">(
     () => {
       if (
-        props.lockedProvider !== null ||
+        (props.lockedProvider !== null && activeEntry !== undefined) ||
         activeInstanceHasSelectableUnavailableModel ||
         activeInstanceNeedsSetup
       ) {
         return props.activeInstanceId;
       }
-      return favorites.length > 0 ? "favorites" : props.activeInstanceId;
+      if (
+        favorites.some((favorite) =>
+          instanceEntries.some((entry) => entry.instanceId === favorite.provider),
+        )
+      ) {
+        return "favorites";
+      }
+      return activeEntry?.instanceId ?? instanceEntries[0]?.instanceId ?? "favorites";
     },
   );
   const favoritesSet = new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));

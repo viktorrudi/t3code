@@ -1,3 +1,4 @@
+import { projectModelInstances } from "../../personal/projectModels";
 import { useAtSearchMode, useRecentModelMentions } from "../../personal/personalSettings";
 import { modelMentionKey, serializeModelMention } from "../../personal/modelMentions";
 import { useProject } from "../../state/entities";
@@ -2462,6 +2463,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       lockedProvider={lockedProvider}
       lockedContinuationGroupKey={lockedContinuationGroupKey}
       providerInstanceEntries={providerInstanceEntries}
+      pickerInstanceEntries={
+        activeProjectId !== null && mentionProject === null
+          ? []
+          : projectModelInstances(providerInstanceEntries, mentionProject?.title ?? null)
+      }
       keybindings={keybindings}
       modelOptionsByInstance={modelOptionsByInstance}
       terminalOpen={terminalOpen}

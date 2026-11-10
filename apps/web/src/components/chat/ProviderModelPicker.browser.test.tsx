@@ -1,3 +1,6 @@
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { __setClientSettingsForTests } from "../../hooks/useSettings";
+import { projectModelInstances } from "../../personal/projectModels";
 import { ProviderDriverKind, ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
@@ -169,3 +172,84 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await userEvent.keyboard("{Escape}");
   await expect.element(search).not.toBeInTheDocument();
 });
+
+it.each(["Sensoneo", "Personal"])(
+  "filters providers, favorites and search for %s",
+  async (projectTitle) => {
+    const entries = deriveProviderInstanceEntries(
+      ["codex", "claude-sensoneo", "litellm-sensoneo", "cursor"].map((id) => ({
+        instanceId: ProviderInstanceId.make(id),
+        driver: ProviderDriverKind.make(id === "cursor" ? "cursor" : "codex"),
+        displayName: id,
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready" as const,
+        auth: { status: "authenticated" as const },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: [{ slug: id + "-model", name: id + " model", isCustom: false, capabilities: {} }],
+        skills: [],
+        slashCommands: [],
+      })),
+    );
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      favorites: entries.map((entry) => ({
+        provider: entry.instanceId,
+        model: entry.models[0]!.slug,
+      })),
+    });
+    using _settings = {
+      [Symbol.dispose]: () => __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS),
+    };
+    const eligible = projectModelInstances(entries, projectTitle);
+    const excluded = entries.filter((entry) => !eligible.includes(entry));
+    const current = excluded[0]!;
+    const options = new Map(entries.map((entry) => [entry.instanceId, entry.models]));
+    const picker = (key: string) => (
+      <ProviderModelPicker
+        key={key}
+        environmentId={null}
+        activeInstanceId={current.instanceId}
+        model={current.models[0]!.slug}
+        lockedProvider={null}
+        instanceEntries={entries}
+        pickerInstanceEntries={eligible}
+        modelOptionsByInstance={options}
+        triggerAriaLabel="Choose model"
+        onInstanceModelChange={() => {}}
+      />
+    );
+    await using screen = await render(picker("favorites"));
+    await screen.getByRole("button", { name: "Choose model" }).click();
+    for (const entry of eligible) {
+      await expect
+        .element(page.getByRole("option", { name: new RegExp(entry.models[0]!.name) }))
+        .toBeVisible();
+      await expect
+        .element(page.getByRole("button", { name: entry.displayName, exact: true }))
+        .toBeVisible();
+    }
+    for (const entry of excluded) {
+      await expect
+        .element(page.getByRole("option", { name: new RegExp(entry.models[0]!.name) }))
+        .not.toBeInTheDocument();
+      await expect
+        .element(page.getByRole("button", { name: entry.displayName, exact: true }))
+        .not.toBeInTheDocument();
+    }
+    await userEvent.fill(page.getByPlaceholder("Search models..."), "model");
+    for (const entry of excluded) {
+      await expect
+        .element(page.getByRole("option", { name: new RegExp(entry.models[0]!.name) }))
+        .not.toBeInTheDocument();
+    }
+    await userEvent.keyboard("{Escape}");
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    await screen.rerender(picker("no-favorites"));
+    await screen.getByRole("button", { name: "Choose model" }).click();
+    await expect
+      .element(page.getByRole("option", { name: new RegExp(eligible[0]!.models[0]!.name) }))
+      .toBeVisible();
+  },
+);

@@ -1,6 +1,7 @@
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import type { AppModelOption } from "../modelSelection";
 import type { ProviderInstanceEntry } from "../providerInstances";
+import { projectModelInstances } from "./projectModels";
 
 export interface ModelMention {
   readonly instanceId: ProviderInstanceId;
@@ -10,8 +11,6 @@ export interface ModelMention {
   readonly name: string;
 }
 
-const SENSONEO_PROJECT_TITLES = new Set(["sensoneo", "sensoneo frontend"]);
-const SENSITIVE_INSTANCES = new Set(["claude-sensoneo", "litellm-sensoneo", "cursor"]);
 const PREFIX = "t3-model://reference?";
 
 export function modelMentionKey(model: Pick<ModelMention, "instanceId" | "model">): string {
@@ -88,15 +87,9 @@ export function modelMentionMatches(input: {
   query: string;
   recentKeys: ReadonlyArray<string>;
 }): Array<ModelMention & { readonly entry: ProviderInstanceEntry }> {
-  const sensoneo = SENSONEO_PROJECT_TITLES.has(input.projectTitle?.trim().toLowerCase() ?? "");
   const words = input.query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const matches = input.entries.flatMap((entry) => {
-    if (
-      !entry.enabled ||
-      !entry.isAvailable ||
-      SENSITIVE_INSTANCES.has(entry.instanceId) !== sensoneo
-    )
-      return [];
+  const matches = projectModelInstances(input.entries, input.projectTitle).flatMap((entry) => {
+    if (!entry.enabled || !entry.isAvailable) return [];
     return (input.modelOptions.get(entry.instanceId) ?? []).flatMap((option) => {
       if (option.isUnavailable) return [];
       const haystack = [
