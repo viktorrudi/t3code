@@ -284,11 +284,11 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
-          <SidebarUsageRings onClick={handleUsageClick} />
         </>
       )}
       <SidebarThreadUndoNotice />
       <SidebarUpdatePill />
+      {!isOnUtilityPage ? <SidebarUsageRings onClick={handleUsageClick} /> : null}
     </SidebarMenu>
   );
 });

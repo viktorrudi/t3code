@@ -83,6 +83,28 @@ function publish(update: DesktopUpdateState | null) {
 
 const releaseNotes = () => document.querySelector('[aria-label="Update release notes"]');
 
+describe("SidebarUpdatePill availability", () => {
+  it.each([
+    { status: null, enabled: false, hasUpdates: false, visible: false },
+    { status: "disabled", enabled: false, hasUpdates: false, visible: false },
+    { status: "disabled", enabled: false, hasUpdates: true, visible: true },
+    { status: "checking", enabled: true, hasUpdates: false, visible: true },
+    { status: "downloading", enabled: true, hasUpdates: false, visible: true },
+    { status: "idle", enabled: true, hasUpdates: false, visible: true },
+  ] as const)(
+    "preserves actionable and in-progress updates: %j",
+    async ({ status, enabled, hasUpdates, visible }) => {
+      setup(status === null ? null : { ...nightlyUpdate([]), status, enabled }, { hasUpdates });
+      await using screen = await render(<SidebarUpdatePill />);
+      if (visible) {
+        await expect.element(screen.getByRole("button")).toBeVisible();
+      } else {
+        await expect.element(screen.getByRole("button")).not.toBeInTheDocument();
+      }
+    },
+  );
+});
+
 describe("SidebarUpdatePill release notes", () => {
   it("closes when the release notes stop applying", async () => {
     setup(nightlyUpdate(RELEASE_NOTES));

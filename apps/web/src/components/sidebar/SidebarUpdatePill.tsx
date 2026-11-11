@@ -449,6 +449,8 @@ function SidebarUpdateControl() {
     );
   }
 
+  if (!showUpdateDetails && !showCheckIcon && !isActionPending && disabled) return null;
+
   const updateButton = (
     <button
       type="button"
@@ -497,7 +499,7 @@ function SidebarUpdateControl() {
   );
 
   return (
-    <SidebarMenuItem className="ml-auto shrink-0">
+    <SidebarMenuItem className="shrink-0">
       <Popover
         handle={releaseNotesPopoverHandle}
         open={releaseNotesOpen && showReleaseNotesPopover}
