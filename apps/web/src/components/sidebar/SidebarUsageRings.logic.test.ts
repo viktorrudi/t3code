@@ -147,7 +147,9 @@ describe("sidebarUsageRings", () => {
 it("formats reset countdowns without presenting elapsed or missing resets as fresh quota", () => {
   const now = Date.parse("2026-11-10T09:00:00Z");
   expect(sidebarUsageReset("2026-11-10T11:14:00Z", now)).toBe("2h 14m");
-  expect(sidebarUsageReset("2026-11-13T14:37:00Z", now)).toBe("3d 5h");
+  expect(sidebarUsageReset("2026-11-13T14:37:00Z", now)).toBe("3d");
+  expect(sidebarUsageReset("2026-11-11T09:00:00Z", now)).toBe("1d");
+  expect(sidebarUsageReset("2026-11-11T08:59:00Z", now)).toBe("23h 59m");
   expect(sidebarUsageReset("2026-11-10T09:00:30Z", now)).toBe("<1m");
   expect(sidebarUsageReset("2026-11-10T08:00:00Z", now)).toBe("Due");
   expect(sidebarUsageReset(undefined, now)).toBe("?");

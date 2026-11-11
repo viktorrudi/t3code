@@ -79,7 +79,8 @@ export function sidebarUsageReset(resetsAt: string | undefined, now: number): st
   const reset = resetsAt ? Date.parse(resetsAt) : Number.NaN;
   if (!Number.isFinite(reset)) return "?";
   if (reset <= now) return "Due";
-  return reset - now < 60_000 ? "<1m" : formatDuration(reset - now);
+  const days = Math.floor((reset - now) / 86_400_000);
+  return days > 0 ? `${days}d` : reset - now < 60_000 ? "<1m" : formatDuration(reset - now);
 }
 
 export type SidebarUsageTrack = ReturnType<typeof accountTrack>;
