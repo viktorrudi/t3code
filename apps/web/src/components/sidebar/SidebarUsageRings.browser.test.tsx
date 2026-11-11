@@ -56,8 +56,20 @@ function setup() {
           usedPercent: 60,
           resetsAt: "2026-11-13T14:37:00Z",
         },
-        { id: "autoPercentUsed", kind: "monthly", label: "Cursor Models", usedPercent: 10 },
-        { id: "apiPercentUsed", kind: "monthly", label: "Other Models", usedPercent: 20 },
+        {
+          id: "autoPercentUsed",
+          kind: "monthly",
+          label: "Cursor Models",
+          usedPercent: 10,
+          resetsAt: "2026-11-25T09:00:00Z",
+        },
+        {
+          id: "apiPercentUsed",
+          kind: "monthly",
+          label: "Other Models",
+          usedPercent: 20,
+          resetsAt: "2026-11-25T09:00:00Z",
+        },
       ],
     },
   }));
@@ -76,14 +88,20 @@ it("reveals inline reset timers together on section hover and keyboard focus", a
   const sensoneo = screen
     .getByRole("button", { name: /^Sensoneo · Claude:/ })
     .getByText("3d", { exact: true });
+  const cursor = screen
+    .getByRole("button", { name: /^Sensoneo · Cursor:/ })
+    .getByText("15d", { exact: true });
   await expect.element(codex).not.toBeVisible();
+  await expect.element(cursor).not.toBeVisible();
   await userEvent.hover(section);
   await expect.element(codex).toBeVisible();
   await expect.element(personal).toBeVisible();
+  await expect.element(cursor).toBeVisible();
   await expect.element(sensoneo).toBeVisible();
   await expect.element(page.getByText("Personal · Codex", { exact: true })).not.toBeInTheDocument();
   await userEvent.unhover(section);
   await expect.element(codex).not.toBeVisible();
+  await expect.element(cursor).not.toBeVisible();
   await userEvent.tab();
   await expect.element(codex).toBeVisible();
   await expect.element(sensoneo).toBeVisible();

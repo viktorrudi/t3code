@@ -33,9 +33,9 @@ function UsageIndicator({
     reset: sidebarUsageReset(window.resetsAt, now),
   }));
   const details = windows
-    .map((window) => {
+    .map((window, index) => {
       const reset =
-        track.name === "Cursor"
+        track.name === "Cursor" && index > 0
           ? ""
           : window.reset === "Due"
             ? "; reset due, waiting for refresh"
@@ -81,7 +81,9 @@ function UsageIndicator({
                   {window.percent === null ? "?" : `${window.percent}%`}
                 </span>
                 <span className="h-0 translate-y-1 overflow-hidden whitespace-nowrap text-3xs leading-3 text-sidebar-muted-foreground opacity-0 transition-[height,opacity,transform] duration-180 ease-out group-hover/usage:h-3 group-hover/usage:translate-y-0 group-hover/usage:opacity-100 group-focus-within/usage:h-3 group-focus-within/usage:translate-y-0 group-focus-within/usage:opacity-100 motion-reduce:transition-none">
-                  {track.name !== "Cursor" && window.reset !== "?" ? window.reset : ""}
+                  {(track.name !== "Cursor" || index === 0) && window.reset !== "?"
+                    ? window.reset
+                    : ""}
                 </span>
               </span>
             </Fragment>

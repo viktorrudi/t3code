@@ -59,11 +59,18 @@ describe("sidebarUsageRings", () => {
           windows: [
             { id: "apiPercentUsed", kind: "monthly", label: "Other Models", usedPercent: 80 },
             { id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 50 },
-            { id: "autoPercentUsed", kind: "monthly", label: "Cursor Models", usedPercent: 10 },
+            {
+              id: "autoPercentUsed",
+              kind: "monthly",
+              label: "Cursor Models",
+              usedPercent: 10,
+              resetsAt: "2026-11-25T09:00:00Z",
+            },
           ],
         },
       }),
     ]);
+    expect(rings.sensoneo[1]?.windows[0]?.resetsAt).toBe("2026-11-25T09:00:00Z");
     expect(rings.personal.map((track) => track.instanceId)).toEqual(["codex", "claudeAgent"]);
     expect(rings.sensoneo.map((track) => track.instanceId)).toEqual(["claude-sensoneo", "cursor"]);
     expect(rings.personal[0]?.windows.map((window) => window.percent)).toEqual([40]);

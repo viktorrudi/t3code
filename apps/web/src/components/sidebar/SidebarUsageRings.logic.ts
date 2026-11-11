@@ -36,7 +36,7 @@ function accountTrack(provider: ServerProvider, name: "Codex" | "Claude" | "Curs
           : provider.auth.status === "unauthenticated"
             ? "Signed out"
             : "Unavailable",
-      resetsAt: percent !== null && name !== "Cursor" ? window?.resetsAt : undefined,
+      resetsAt: percent !== null ? window?.resetsAt : undefined,
     };
   });
   return {
