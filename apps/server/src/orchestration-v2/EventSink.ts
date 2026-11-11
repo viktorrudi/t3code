@@ -37,6 +37,7 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as DeferredThreadTitles from "./personal/DeferredThreadTitles.ts";
 
 export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
   "EventSinkWriteError",
@@ -248,6 +249,7 @@ const layerBase: Layer.Layer<
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const enqueueDeferredTitles = yield* DeferredThreadTitles.make;
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
     const liveEventsByType = new Map<
       OrchestrationV2DomainEvent["type"],
@@ -280,6 +282,11 @@ const layerBase: Layer.Layer<
         .pipe(
           Effect.andThen(eventStore.publishCommitted(events)),
           Effect.andThen(publishLiveEvents(events)),
+          Effect.andThen(
+            DeferredThreadTitles.hasCompletedRun(events)
+              ? effectOutbox.notifyAvailable()
+              : Effect.void,
+          ),
         );
 
     // Serialize commit and publish; reordered publication makes clients drop earlier sequences.
@@ -408,6 +415,9 @@ const layerBase: Layer.Layer<
               last_sequence = excluded.last_sequence,
               updated_at = excluded.updated_at
           `;
+        }
+        if (DeferredThreadTitles.hasCompletedRun(storedEvents)) {
+          yield* enqueueDeferredTitles(storedEvents);
         }
         // Read lineage here, on the connection this transaction holds; see makeRunOutcomeRecorder.
         return yield* runOutcomes.prepare(storedEvents);

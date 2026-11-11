@@ -51,6 +51,7 @@ const adapter = {
 function makeHarness(
   options: {
     readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
+    readonly projectTitle?: string;
   } = {},
 ) {
   const layerDatabase = SqlitePersistence.layerMemory;
@@ -76,7 +77,7 @@ function makeHarness(
         requestedProjectId === projectId
           ? Option.some({
               projectId,
-              title: "Project",
+              title: options.projectTitle ?? "Project",
               workspaceRoot: "/repo",
               defaultModelSelection: modelSelection,
               defaultThreadEnvMode: null,
@@ -111,6 +112,7 @@ function makeHarness(
       layerTitleRegeneration,
       layerOutbox,
       layerDatabase,
+      ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
     ),
     generateThreadTitle,
   };
@@ -172,7 +174,7 @@ function recordRun(input: {
   readonly ordinal: number;
   readonly user: string;
   readonly assistant: string;
-  readonly status?: "completed" | "rolled_back";
+  readonly status?: "completed" | "rolled_back" | "failed" | "interrupted";
 }) {
   return Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
@@ -544,3 +546,116 @@ describe("ThreadTitleRegenerationService", () => {
     }),
   );
 });
+
+it.effect("defers Sensoneo titles until completed ticket context and preserves manual titles", () =>
+  Effect.gen(function* () {
+    for (const testCase of [
+      { projectTitle: "Sensoneo", manualTitle: false, deferred: true },
+      { projectTitle: "Sensoneo Frontend", manualTitle: false, deferred: true },
+      { projectTitle: "Sensoneo", manualTitle: true, deferred: true },
+      { projectTitle: "Project", manualTitle: false, deferred: false },
+    ]) {
+      const harness = makeHarness({ projectTitle: testCase.projectTitle });
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const titles = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const projects = yield* ProjectStore.ProjectStoreV2;
+        yield* projects.apply({
+          sequence: 0,
+          eventId: EventId.make("seed:title-project"),
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt: "2026-06-20T00:00:00.000Z",
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "project.created",
+          payload: {
+            projectId,
+            title: testCase.projectTitle,
+            workspaceRoot: "/repo",
+            defaultModelSelection: modelSelection,
+            scripts: [],
+            createdAt: "2026-06-20T00:00:00.000Z",
+            updatedAt: "2026-06-20T00:00:00.000Z",
+          },
+        });
+        const threadId = yield* createThread({
+          command: "create:deferred",
+          thread: "title:deferred",
+        });
+        const requestId = CommandId.make("message:deferred");
+        const messageId = MessageId.make("message:deferred:user");
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: requestId,
+          threadId,
+          messageId,
+          text: "/ticket RET-1234",
+          titleSeed: "RET-1234",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* titles.execute({ threadId, requestId, kind: { type: "initial", messageId } });
+        assert.equal(harness.generateThreadTitle.mock.calls.length, testCase.deferred ? 0 : 1);
+        if (testCase.deferred) {
+          for (const [ordinal, status] of (["failed", "interrupted"] as const).entries()) {
+            yield* recordRun({
+              threadId,
+              runId: RunId.make(`run:unsuccessful:${ordinal}`),
+              ordinal: ordinal + 2,
+              user: "/ticket RET-1234",
+              assistant: "Ticket lookup did not finish.",
+              status,
+            });
+          }
+          yield* titles.execute({ threadId, requestId, kind: { type: "initial", messageId } });
+          assert.equal(harness.generateThreadTitle.mock.calls.length, 0);
+          assert.equal((yield* outbox.listByCommandId(requestId)).length, 1);
+        }
+        if (testCase.manualTitle) {
+          yield* threads.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("rename:deferred"),
+            threadId,
+            title: "My chosen title",
+          });
+        }
+        for (const ordinal of [1, 2]) {
+          yield* recordRun({
+            threadId,
+            runId: RunId.make(`run:deferred:${ordinal}`),
+            ordinal: ordinal + 4,
+            user: "/ticket RET-1234",
+            assistant: "Atlassian ticket context: RET-1234 fixes operator location filtering.",
+          });
+        }
+        const effects = yield* outbox.listByCommandId(requestId);
+        const deferred = effects.filter((effect) => effect.id.endsWith(":after-first-turn"));
+        assert.equal(deferred.length, testCase.deferred && !testCase.manualTitle ? 1 : 0);
+        if (deferred[0]?.request.type === "thread-title.generate") {
+          yield* titles.execute({ threadId, requestId, kind: deferred[0].request.kind });
+          assert.equal(harness.generateThreadTitle.mock.calls.length, 1);
+          assert.include(
+            harness.generateThreadTitle.mock.calls[0]?.[0]?.message,
+            "operator location filtering",
+          );
+          assert.isNull((yield* threads.getThreadProjection(threadId)).thread.titleRegeneration);
+        }
+        if (testCase.manualTitle) {
+          yield* titles.execute({ threadId, requestId, kind: { type: "regenerate" } });
+          assert.equal(
+            (yield* threads.getThreadProjection(threadId)).thread.title,
+            "My chosen title",
+          );
+          assert.equal(harness.generateThreadTitle.mock.calls.length, 0);
+        }
+      }).pipe(Effect.provide(harness.layer));
+    }
+  }),
+);

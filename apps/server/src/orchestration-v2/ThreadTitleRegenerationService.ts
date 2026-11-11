@@ -23,6 +23,7 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type { OrchestratorV2Error } from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import { isSensoneoProject } from "./personal/DeferredThreadTitles.ts";
 
 import { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
 export { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
@@ -113,7 +114,7 @@ const make = Effect.gen(function* () {
     const outcome:
       | { readonly type: "stale" }
       | { readonly type: "complete"; readonly title?: string } = yield* Effect.gen(function* () {
-      const projection = yield* threads.getThreadRecords(
+      let projection = yield* threads.getThreadRecords(
         input.threadId,
         ["messages"],
         input.kind.type === "initial"
@@ -129,11 +130,23 @@ const make = Effect.gen(function* () {
         return { type: "complete" as const };
       }
 
+      const deferredInitial =
+        input.kind.type === "initial" && isSensoneoProject(project.value.title);
+      if (deferredInitial) {
+        const records = yield* threads.getThreadRecords(input.threadId, ["messages", "runs"], {
+          messageRoles: ["user", "assistant"],
+        });
+        if (!records.runs.some((run) => run.status === "completed")) {
+          return { type: "stale" as const };
+        }
+        projection = records;
+      }
+
       let context: {
         readonly message: string;
         readonly attachments: ReadonlyArray<ChatAttachment>;
       };
-      if (input.kind.type === "initial") {
+      if (input.kind.type === "initial" && !deferredInitial) {
         const messageId = input.kind.messageId;
         const message = projection.messages.find(
           (candidate) => candidate.id === messageId && !candidate.streaming,
