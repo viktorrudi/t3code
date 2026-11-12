@@ -896,7 +896,10 @@ export function useThreadActions() {
     });
   };
 
-  const snoozeThread = async (target: ScopedThreadRef, snoozedUntil: string) => {
+  const snoozeThread = async (
+    target: ScopedThreadRef,
+    choice: string | import("@t3tools/contracts").ThreadSnoozeChoice,
+  ) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
         Cause.fail(
@@ -922,7 +925,10 @@ export function useThreadActions() {
     const action = ThreadUndo.begin("snooze", scopedThreadKey(target));
     const result = await snoozeThreadMutation({
       environmentId: target.environmentId,
-      input: { threadId: target.threadId, snoozedUntil },
+      input: {
+        threadId: target.threadId,
+        ...(typeof choice === "string" ? { snoozedUntil: choice } : choice),
+      },
     });
     if (result._tag !== "Success") {
       action.finish();
@@ -954,7 +960,11 @@ export function useThreadActions() {
           case "snooze":
             return snoozeThreadMutation({
               environmentId: target.environmentId,
-              input: { threadId: target.threadId, snoozedUntil: step.snoozedUntil },
+              input: {
+                threadId: target.threadId,
+                snoozedUntil: step.snoozedUntil,
+                snoozeCondition: step.snoozeCondition,
+              },
             });
         }
       },

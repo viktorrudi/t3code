@@ -71,6 +71,8 @@ export function hasQueuedTurnStart(
 export interface ThreadSnoozeShell extends QueuedThreadShell {
   readonly source?: Pick<EnvironmentThreadShell["source"], "pendingRuntimeRequest">;
   readonly snoozedUntil?: string | null;
+  readonly snoozeCondition?: import("@t3tools/contracts").ThreadSnoozeCondition | null;
+  readonly lastEventSnoozeWakeAt?: string | null;
   readonly snoozedAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
@@ -158,6 +160,7 @@ export function effectiveSnoozed(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },
 ): boolean {
+  if (shell.snoozeCondition != null) return !threadRaisedHandWhileSnoozed(shell);
   if (shell.snoozedUntil == null) return false;
   const wakeAtMs = Date.parse(shell.snoozedUntil);
   if (Number.isNaN(wakeAtMs)) return false;
@@ -169,8 +172,9 @@ export function threadWokeAt(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },
 ): string | null {
-  if (shell.snoozedUntil == null) return null;
-  const wakeAtMs = Date.parse(shell.snoozedUntil);
+  if (shell.snoozedUntil == null && shell.snoozeCondition == null)
+    return shell.lastEventSnoozeWakeAt ?? null;
+  const wakeAtMs = shell.snoozedUntil == null ? Infinity : Date.parse(shell.snoozedUntil);
   if (Number.isNaN(wakeAtMs)) return null;
   // An early hand-raise wake stays authoritative even after the scheduled
   // wake time passes: reporting snoozedUntil then would resurface a Woke
@@ -193,7 +197,7 @@ export function threadWokeAt(
     const runtime = shell.runtime ?? shell.session ?? null;
     return runtime?.updatedAt ?? shell.snoozedAt ?? null;
   }
-  return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;
+  return wakeAtMs <= Date.parse(options.now) ? (shell.snoozedUntil ?? null) : null;
 }
 
 const HOUR_MS = 60 * 60 * 1_000;

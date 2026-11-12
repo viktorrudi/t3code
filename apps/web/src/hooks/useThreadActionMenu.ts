@@ -1,4 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { hasEventSnoozeOptions, requestEventSnooze } from "../components/EventSnoozeMenu";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
 import {
@@ -147,6 +148,13 @@ export function useThreadActionMenu(input: {
         isRunning: !threadRuntimeCanArchive(thread.runtime),
         supports,
         snoozePresets,
+        eventSnooze: hasEventSnoozeOptions(
+          thread,
+          projects.find(
+            (project) =>
+              project.id === thread.projectId && project.environmentId === thread.environmentId,
+          ) ?? null,
+        ),
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
       });
@@ -165,16 +173,25 @@ export function useThreadActionMenu(input: {
       }
       if (action.startsWith("snooze:")) {
         const preset =
-          action === "snooze:custom"
-            ? await requestCustomSnooze()
-            : pickSnoozePreset(
-                snoozePresets,
-                action.slice("snooze:".length),
-                timestampFormat,
-                threadRef.environmentId,
-              );
+          action === "snooze:event"
+            ? await requestEventSnooze(
+                thread,
+                projects.find(
+                  (project) =>
+                    project.id === thread.projectId &&
+                    project.environmentId === thread.environmentId,
+                ) ?? null,
+              )
+            : action === "snooze:custom"
+              ? await requestCustomSnooze()
+              : pickSnoozePreset(
+                  snoozePresets,
+                  action.slice("snooze:".length),
+                  timestampFormat,
+                  threadRef.environmentId,
+                );
         if (!preset) return;
-        const result = await snoozeThread(threadRef, preset.snoozedUntil);
+        const result = await snoozeThread(threadRef, preset);
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
           failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
         }

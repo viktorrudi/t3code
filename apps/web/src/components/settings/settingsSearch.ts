@@ -447,7 +447,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "snooze-options",
     title: "Snooze options",
     to: "/settings/threads",
-    searchTerms: ["snooze presets times later tonight tomorrow next week remind"],
+    searchTerms: [
+      "snooze presets times later tonight tomorrow next week remind Jira PR approval comment event projects API token",
+    ],
     environmentOnly: true,
     scope: "environment-defaults",
   },

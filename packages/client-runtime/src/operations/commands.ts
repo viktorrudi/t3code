@@ -112,7 +112,8 @@ export interface ReorderActiveThreadInput extends ThreadCommandInput {
 }
 
 export interface SnoozeThreadInput extends ThreadCommandInput {
-  readonly snoozedUntil: string;
+  readonly snoozedUntil?: string | undefined;
+  readonly snoozeCondition?: import("@t3tools/contracts").ThreadSnoozeCondition | undefined;
 }
 
 export interface UnsnoozeThreadInput extends ThreadCommandInput {
@@ -581,6 +582,7 @@ export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(functi
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     snoozedUntil: input.snoozedUntil,
+    snoozeCondition: input.snoozeCondition,
   });
 });
 

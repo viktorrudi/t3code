@@ -208,6 +208,65 @@ describe("decodeThreadsJson", () => {
     });
   });
 
+  it("keeps timestamped approvals while excluding other system changes", () => {
+    const comments = expectSuccess(
+      decodeThreadsJson(
+        asJson({
+          value: [
+            {
+              id: 10,
+              properties: {
+                CodeReviewThreadType: { $value: "VoteUpdate" },
+                CodeReviewVoteResult: { $value: "10" },
+              },
+              comments: [
+                {
+                  id: 1,
+                  content: "Reviewer voted 10",
+                  commentType: "system",
+                  publishedDate: "2026-07-04T00:00:00Z",
+                },
+              ],
+            },
+            {
+              id: 11,
+              properties: {
+                CodeReviewThreadType: { $value: "VoteUpdate" },
+                CodeReviewVoteResult: { $value: "-10" },
+              },
+              comments: [
+                {
+                  id: 1,
+                  content: "Reviewer voted -10",
+                  commentType: "system",
+                  publishedDate: "2026-07-04T00:00:01Z",
+                },
+              ],
+            },
+            {
+              id: 12,
+              properties: { CodeReviewThreadType: { $value: "RefUpdate" } },
+              comments: [
+                {
+                  id: 1,
+                  content: "Branch updated",
+                  commentType: "system",
+                  publishedDate: "2026-07-04T00:00:02Z",
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toMatchObject({
+      kind: "review",
+      reviewState: "APPROVED",
+      createdAt: "2026-07-04T00:00:00Z",
+    });
+  });
+
   it("reads a thread pinned to a file as a review comment on the path its diff uses", () => {
     const comments = expectSuccess(
       decodeThreadsJson(

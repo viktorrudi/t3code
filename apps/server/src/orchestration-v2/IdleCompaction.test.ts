@@ -179,6 +179,9 @@ describe("idleCompactionWindow", () => {
     // A turn Claude itself reported as cancelled did run, so it stays the latest.
     steered.runs = steered.runs.map((run) => ({ ...run, startedAt: at(-MINUTE_MS) }));
     expect(idleCompactionWindow(steered, NOW_MS)).toBeNull();
+    const snoozed = records(cache);
+    snoozed.thread = { ...snoozed.thread, snoozeCondition: { kind: "jira", issueKey: "RET-1234" } };
+    expect(idleCompactionWindow(snoozed, NOW_MS)).toBeNull();
     const archived = records(cache);
     archived.thread = { ...archived.thread, archivedAt: at() };
     expect(idleCompactionWindow(archived, NOW_MS)).toBeNull();

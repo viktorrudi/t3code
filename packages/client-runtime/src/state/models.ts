@@ -177,6 +177,8 @@ export interface EnvironmentThreadShell {
   readonly settledAt: string | null;
   readonly unsettledAt: string | null;
   readonly snoozedUntil: string | null;
+  readonly snoozeCondition?: import("@t3tools/contracts").ThreadSnoozeCondition | null;
+  readonly lastEventSnoozeWakeAt?: string | null;
   readonly snoozedAt: string | null;
   readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecovery | null;
   readonly pinnedAt: string | null;
@@ -333,6 +335,8 @@ export function presentThreadShell(
     unsettledAt: nullableIso(thread.unsettledAt ?? null),
     snoozedUntil: nullableIso(thread.snoozedUntil ?? null),
     snoozedAt: nullableIso(thread.snoozedAt ?? null),
+    snoozeCondition: thread.snoozeCondition ?? null,
+    lastEventSnoozeWakeAt: nullableIso(thread.lastEventSnoozeWakeAt ?? null),
     limitRecovery: thread.limitRecovery ?? null,
     pinnedAt: nullableIso(thread.pinnedAt ?? null),
     autoSettleDisabledAt: nullableIso(thread.autoSettleDisabledAt ?? null),

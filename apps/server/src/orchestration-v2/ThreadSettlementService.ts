@@ -166,6 +166,7 @@ export function isSnoozed(
     ProjectionStore.ProjectionSettlementCandidate,
     | "snoozedUntil"
     | "snoozedAt"
+    | "snoozeCondition"
     | "latestRunCompletedAt"
     | "status"
     | "pendingRuntimeRequest"
@@ -174,7 +175,8 @@ export function isSnoozed(
   nowMs: number,
 ): boolean {
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
-  if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return false;
+  if (thread.snoozeCondition == null && (snoozedUntilMs === null || snoozedUntilMs <= nowMs))
+    return false;
   // Same as the client: a waiting guest message wakes the thread, and the snooze stays stored.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
   const snoozedAtMs = toMillis(thread.snoozedAt);

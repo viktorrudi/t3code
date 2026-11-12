@@ -13,6 +13,7 @@ import {
   RuntimeRequestId,
   ProviderUserInputAnswers,
   IsoDateTime,
+  ThreadSnoozeCondition,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
   ThreadId,
@@ -31,7 +32,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs exactly one of `snoozedUntil` or `snoozeCondition` (a linked PR approval/comment or Jira ticket comment, when enabled for the project). Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
@@ -47,6 +48,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "mark_unread",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
+    snoozeCondition: Schema.optional(ThreadSnoozeCondition),
   }),
   success: Schema.Union([
     OrchestrationV2DispatchCommandResult,

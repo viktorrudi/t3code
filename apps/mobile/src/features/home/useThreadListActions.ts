@@ -193,7 +193,10 @@ export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
-  readonly snoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => Promise<boolean>;
+  readonly snoozeThread: (
+    thread: EnvironmentThreadShell,
+    choice: string | import("@t3tools/contracts").ThreadSnoozeChoice,
+  ) => Promise<boolean>;
   readonly unsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly pinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -251,7 +254,11 @@ export function useThreadListActions(): {
                   if (!checkThreadOperationPermission(thread, failureTitle)) return false;
                   const result = await snoozeMutation({
                     environmentId: thread.environmentId,
-                    input: { threadId: thread.id, snoozedUntil: step.snoozedUntil },
+                    input: {
+                      threadId: thread.id,
+                      snoozedUntil: step.snoozedUntil,
+                      snoozeCondition: step.snoozeCondition,
+                    },
                   });
                   if (result._tag === "Failure") {
                     const error = Cause.squash(result.cause);
@@ -290,7 +297,10 @@ export function useThreadListActions(): {
     }
     return succeeded;
   };
-  const snoozeThread = async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
+  const snoozeThread = async (
+    thread: EnvironmentThreadShell,
+    choice: string | import("@t3tools/contracts").ThreadSnoozeChoice,
+  ) => {
     if (!checkThreadOperationPermission(thread, "Could not snooze thread")) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
     if (snoozeInFlightThreadKeys.current.has(key)) {
@@ -324,7 +334,7 @@ export function useThreadListActions(): {
             environmentId: thread.environmentId,
             input: {
               threadId: thread.id,
-              snoozedUntil,
+              ...(typeof choice === "string" ? { snoozedUntil: choice } : choice),
             },
           }),
         (result) => result._tag === "Success",

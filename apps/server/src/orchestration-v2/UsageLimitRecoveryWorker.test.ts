@@ -103,6 +103,23 @@ describe("limitRecoveryCommand arming", () => {
     const thread = failedThread(6 * HOUR_MS, HOUR_MS);
     const arm = limitRecoveryCommand(thread, true, nowMs);
     assert.equal(arm?.type, "thread.metadata.update");
+    const waiting = {
+      ...thread,
+      limitRecovery: {
+        runId: thread.latestRunId!,
+        resetAt: thread.usageLimitResetAt!,
+        autoResume: true,
+        snooze: false,
+      },
+    };
+    assert.equal(limitRecoveryCommand(waiting, true, nowMs)?.type, "message.dispatch");
+    assert.isNull(
+      limitRecoveryCommand(
+        { ...waiting, snoozeCondition: { kind: "jira", issueKey: "RET-1234" } },
+        true,
+        nowMs,
+      ),
+    );
   });
 
   it("arms a reset that is exactly 24 hours overdue", () => {

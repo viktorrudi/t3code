@@ -23,6 +23,7 @@ import {
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { UsageModelFilter } from "./usage.ts";
 import { SecretProviderId, SecretProviderSlug } from "./secretReference.ts";
+import { EventSnoozeRules, DEFAULT_EVENT_SNOOZE_RULES } from "./threadSnooze.ts";
 import { SettingsSecretValue } from "./settingsSecretValue.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
@@ -1321,6 +1322,12 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+export const JiraSnoozeSettings = Schema.Struct({
+  baseUrl: Schema.String,
+  email: Schema.String,
+  apiToken: SettingsSecretValue.pipe(secretSetting),
+});
+
 const CloudSpeechCredential = SettingsSecretValue.pipe(
   Schema.withDecodingDefault(Effect.succeed("")),
 );
@@ -1421,6 +1428,14 @@ export const ServerSettings = Schema.Struct({
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  eventSnoozeRules: EventSnoozeRules.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_EVENT_SNOOZE_RULES)),
+  ),
+  jiraSnooze: JiraSnoozeSettings.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({ baseUrl: "https://sensoneosk.atlassian.net", email: "", apiToken: "" }),
+    ),
+  ),
   snoozePresets: SnoozePresetSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNOOZE_PRESETS)),
   ),
@@ -1749,6 +1764,19 @@ const ModelSelectionPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  eventSnoozeRules: Schema.optionalKey(
+    Schema.Struct({
+      pullRequestProjects: Schema.optionalKey(EventSnoozeRules.fields.pullRequestProjects),
+      jiraProjects: Schema.optionalKey(EventSnoozeRules.fields.jiraProjects),
+    }),
+  ),
+  jiraSnooze: Schema.optionalKey(
+    Schema.Struct({
+      baseUrl: Schema.optionalKey(JiraSnoozeSettings.fields.baseUrl),
+      email: Schema.optionalKey(JiraSnoozeSettings.fields.email),
+      apiToken: Schema.optionalKey(JiraSnoozeSettings.fields.apiToken),
+    }),
+  ),
   setModelFavorites: Schema.optionalKey(
     Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),
   ),

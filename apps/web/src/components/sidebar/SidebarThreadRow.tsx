@@ -1,7 +1,9 @@
+import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { useAtomMount } from "@effect/atom-react";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
+import { EventSnoozeMenuItems } from "../EventSnoozeMenu";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { useDeadlinePassed } from "~/hooks/useDeadline";
@@ -43,6 +45,7 @@ import {
   CircleDashedIcon,
   CircleDotDashedIcon,
   ClockIcon,
+  MessageSquareTextIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
   PinIcon,
@@ -104,7 +107,7 @@ import {
   useLinkedThreadPullRequest,
   ThreadSearchPullRequestNumber,
 } from "../ThreadStatusIndicators";
-import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "../Sidebar.snooze";
+import { pickSnoozePreset, resolveSnoozePresets } from "../Sidebar.snooze";
 import { useThreadShell } from "../../state/entities";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
@@ -370,9 +373,11 @@ function SidebarThreadTooltip({
 function SnoozeMenuButton(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSnooze: (preset: Pick<SnoozePreset, "snoozedUntil">) => void;
+  onSnooze: (preset: import("@t3tools/contracts").ThreadSnoozeChoice) => void;
   timestampFormat: TimestampFormat;
   environmentId: EnvironmentId;
+  thread: SidebarThreadSummary;
+  project: EnvironmentProject | null;
 }) {
   const { open, onOpenChange, onSnooze, timestampFormat, environmentId } = props;
   const presets = open
@@ -425,6 +430,14 @@ function SnoozeMenuButton(props: {
         >
           Custom…
         </MenuItem>
+        <EventSnoozeMenuItems
+          thread={props.thread}
+          project={props.project}
+          onChoose={(choice) => {
+            onSnooze(choice);
+            onOpenChange(false);
+          }}
+        />
       </MenuPopup>
     </Menu>
   );
@@ -582,7 +595,10 @@ type SidebarThreadRowProps = {
     event: PointerEvent,
   ) => void;
   onUnsettle: (threadRef: ScopedThreadRef) => void;
-  onSnooze: (threadRef: ScopedThreadRef, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
+  onSnooze: (
+    threadRef: ScopedThreadRef,
+    preset: import("@t3tools/contracts").ThreadSnoozeChoice,
+  ) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
@@ -909,7 +925,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.stopPropagation();
     onUnpin(threadRef);
   };
-  const handleSnoozePreset = (preset: Pick<SnoozePreset, "snoozedUntil">) => {
+  const handleSnoozePreset = (preset: import("@t3tools/contracts").ThreadSnoozeChoice) => {
     onSnooze(threadRef, preset);
   };
   const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
@@ -1286,8 +1302,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   >
                     {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                       <span className="inline-flex items-center gap-1 text-xs text-info-foreground tabular-nums">
-                        {/* The clock tells a wake time from an age at a glance. */}
-                        <AlarmClockIcon aria-hidden className="size-3" />
+                        {thread.snoozeCondition?.kind === "jira" ? (
+                          <MessageSquareTextIcon aria-hidden className="size-3" />
+                        ) : thread.snoozeCondition?.kind === "pull-request" ? (
+                          <PullRequestGlyph.pullRequest aria-hidden className="size-3" />
+                        ) : (
+                          <AlarmClockIcon aria-hidden className="size-3" />
+                        )}
                         {props.snoozeWakeLabelText}
                       </span>
                     ) : (inFolder ? isWokeStatus : isWoke) ? (
@@ -1550,6 +1571,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       ) : null}
                       {showSnoozeButton ? (
                         <SnoozeMenuButton
+                          thread={thread}
+                          project={props.project}
                           open={snoozeMenuOpen}
                           onOpenChange={setSnoozeMenuOpen}
                           onSnooze={handleSnoozePreset}

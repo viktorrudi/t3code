@@ -1,4 +1,5 @@
 import {
+  JiraSnoozeSettings,
   AntigravitySettings,
   ClaudeSettings,
   CloudSpeechCredentials,
@@ -249,6 +250,11 @@ function mapSecretFieldGroups(
 
   return {
     ...settings,
+    jiraSnooze: mapFields(
+      settings.jiraSnooze,
+      secretSettingsFields(JiraSnoozeSettings),
+      (field) => `jira-snooze-${field}`,
+    ) as ServerSettings["jiraSnooze"],
     cloudSpeechCredentials: mapFields(
       settings.cloudSpeechCredentials,
       voiceSecretFields,

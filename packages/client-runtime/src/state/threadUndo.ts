@@ -39,7 +39,7 @@ export type ThreadUndoStep =
   | { readonly action: "unsettle" }
   | { readonly action: "unsnooze" }
   | { readonly action: "pin"; readonly orderKey?: string }
-  | { readonly action: "snooze"; readonly snoozedUntil: string };
+  | ({ readonly action: "snooze" } & import("@t3tools/contracts").ThreadSnoozeChoice);
 
 export type ThreadUndoPlan = readonly [ThreadUndoStep, ...ThreadUndoStep[]];
 
@@ -49,6 +49,7 @@ export function planThreadUndo(
     readonly pinnedAt?: string | null;
     readonly pinOrderKey?: string | null;
     readonly snoozedUntil?: string | null;
+    readonly snoozeCondition?: import("@t3tools/contracts").ThreadSnoozeCondition | null;
   } | null,
 ): ThreadUndoPlan {
   if (action === "snooze") return [{ action: "unsnooze" }];
@@ -58,9 +59,11 @@ export function planThreadUndo(
   };
   // Pinning clears snooze on the server; restore it after restoring pin placement.
   const snooze =
-    thread?.snoozedUntil != null
-      ? [{ action: "snooze" as const, snoozedUntil: thread.snoozedUntil }]
-      : [];
+    thread?.snoozeCondition != null
+      ? [{ action: "snooze" as const, snoozeCondition: thread.snoozeCondition }]
+      : thread?.snoozedUntil != null
+        ? [{ action: "snooze" as const, snoozedUntil: thread.snoozedUntil }]
+        : [];
   if (action === "unpin") return [pin, ...snooze];
   return [{ action: "unsettle" }, ...(thread?.pinnedAt != null ? [pin] : []), ...snooze];
 }
@@ -74,8 +77,13 @@ export async function executeThreadUndo<Result>(
   for (const step of plan.slice(1)) {
     if (!succeeded(result)) return result;
     // A snooze can expire before Undo runs, and the server rejects an expired restore.
-    // @effect-diagnostics-next-line globalDate:off
-    if (step.action === "snooze" && Date.parse(step.snoozedUntil) <= Date.now()) continue;
+    if (
+      step.action === "snooze" &&
+      step.snoozedUntil !== undefined &&
+      // @effect-diagnostics-next-line globalDate:off
+      Date.parse(step.snoozedUntil) <= Date.now()
+    )
+      continue;
     result = await execute(step);
   }
   return result;

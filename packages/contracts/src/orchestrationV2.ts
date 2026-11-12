@@ -43,6 +43,7 @@ import {
 } from "./baseSchemas.ts";
 import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
+import { ThreadSnoozeCondition } from "./threadSnooze.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import {
@@ -482,8 +483,11 @@ export const OrchestrationV2AppThread = Schema.Struct({
   ),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
-  snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  lastEventSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  snoozeCondition: Schema.optional(Schema.NullOr(ThreadSnoozeCondition)),
+  snoozeRequestId: Schema.optional(Schema.NullOr(CommandId)),
+  snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2153,6 +2157,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   settledAt: Schema.NullOr(Schema.DateTimeUtc),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  lastEventSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  snoozeCondition: Schema.optional(Schema.NullOr(ThreadSnoozeCondition)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2309,8 +2315,10 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   ),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
-  snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  lastEventSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  snoozeCondition: Schema.optional(Schema.NullOr(ThreadSnoozeCondition)),
+  snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
@@ -2747,6 +2755,8 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   settledAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  lastEventSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  snoozeCondition: Schema.optional(Schema.NullOr(ThreadSnoozeCondition)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
@@ -3016,13 +3026,16 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.snooze"),
     commandId: CommandId,
     threadId: ThreadId,
-    snoozedUntil: IsoDateTime,
+    snoozedUntil: Schema.optional(IsoDateTime),
+    snoozeCondition: Schema.optional(ThreadSnoozeCondition),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),
     commandId: CommandId,
     threadId: ThreadId,
-    reason: Schema.Literal("user"),
+    reason: Schema.Literals(["user", "event"]),
+    expectedSnoozeId: Schema.optional(CommandId),
+    snoozedAt: Schema.optional(IsoDateTime),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.auto-settle.set"),

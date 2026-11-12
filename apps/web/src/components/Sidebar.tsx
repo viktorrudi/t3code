@@ -8,6 +8,8 @@ import {
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
+import { hasEventSnoozeOptions, requestEventSnooze } from "./EventSnoozeMenu";
+import { eventSnoozeLabel } from "@t3tools/contracts";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
@@ -222,12 +224,7 @@ import {
 } from "./Sidebar.drag";
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
-import {
-  pickSnoozePreset,
-  resolveSnoozePresets,
-  snoozeWakeLabel,
-  type SnoozePreset,
-} from "./Sidebar.snooze";
+import { pickSnoozePreset, resolveSnoozePresets, snoozeWakeLabel } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -657,7 +654,12 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
       ).push(
         optimisticDrop.clearsSnooze
           ? projected
-          : { ...projected, snoozedAt: thread.snoozedAt, snoozedUntil: thread.snoozedUntil },
+          : {
+              ...projected,
+              snoozedAt: thread.snoozedAt,
+              snoozedUntil: thread.snoozedUntil,
+              snoozeCondition: thread.snoozeCondition ?? null,
+            },
       );
     } else {
       const section = resolveSidebarThreadSection({
@@ -766,14 +768,19 @@ function isOptimisticDropReleased(input: {
     if (
       canonicalSection === optimisticDrop.section &&
       thread.pinnedAt == null &&
-      (!optimisticDrop.clearsSnooze || thread.snoozedUntil == null)
+      (!optimisticDrop.clearsSnooze ||
+        (thread.snoozedUntil == null && thread.snoozeCondition == null))
     ) {
       return true;
     }
     return false;
   }
   if (canonicalSection !== optimisticDrop.section) return false;
-  if (optimisticDrop.clearsSnooze && thread.snoozedUntil != null) return false;
+  if (
+    optimisticDrop.clearsSnooze &&
+    (thread.snoozedUntil != null || thread.snoozeCondition != null)
+  )
+    return false;
   const destinationKeys = optimisticDrop.section === "pinned" ? pinnedKeys : activeKeys;
   const canonicalDestination = destinationKeys.flatMap((key) => {
     const canonical = canonicalByKey.get(key);
@@ -2222,7 +2229,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   const performSnooze = async (
     threadRef: ScopedThreadRef,
-    preset: Pick<SnoozePreset, "snoozedUntil">,
+    preset: import("@t3tools/contracts").ThreadSnoozeChoice,
     opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
   ) => {
     const threadKey = scopedThreadKey(threadRef);
@@ -2231,7 +2238,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     snoozingThreadKeysRef.current.add(threadKey);
     const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
-    const result = await snoozeThread(threadRef, preset.snoozedUntil);
+    const result = await snoozeThread(threadRef, preset);
     snoozingThreadKeysRef.current.delete(threadKey);
     if (result._tag === "Failure") {
       return isAtomCommandInterrupted(result)
@@ -2254,7 +2261,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const attemptSnooze = useStableCallback(
     (
       threadRef: ScopedThreadRef,
-      preset: Pick<SnoozePreset, "snoozedUntil">,
+      preset: import("@t3tools/contracts").ThreadSnoozeChoice,
       opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
     ) => {
       void (async () => {
@@ -2655,6 +2662,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 titleRegeneration: configLoaded,
               },
               snoozePresets,
+              eventSnooze: hasEventSnoozeOptions(
+                thread,
+                projects.find(
+                  (project) =>
+                    project.id === thread.projectId &&
+                    project.environmentId === thread.environmentId,
+                ) ?? null,
+              ),
             }),
             position,
           ),
@@ -2663,14 +2678,23 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
-            clicked.value === "snooze:custom"
-              ? await requestCustomSnooze()
-              : pickSnoozePreset(
-                  snoozePresets,
-                  clicked.value.slice("snooze:".length),
-                  timestampFormat,
-                  thread.environmentId,
-                );
+            clicked.value === "snooze:event"
+              ? await requestEventSnooze(
+                  thread,
+                  projects.find(
+                    (project) =>
+                      project.id === thread.projectId &&
+                      project.environmentId === thread.environmentId,
+                  ) ?? null,
+                )
+              : clicked.value === "snooze:custom"
+                ? await requestCustomSnooze()
+                : pickSnoozePreset(
+                    snoozePresets,
+                    clicked.value.slice("snooze:".length),
+                    timestampFormat,
+                    thread.environmentId,
+                  );
           if (preset) attemptSnooze(threadRef, preset);
           return;
         }
@@ -3402,11 +3426,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               actionSweep?.keys.has(threadKey) ? actionSweep.action : null
                             }
                             snoozeWakeLabelText={
-                              section === "snoozed" && thread.snoozedUntil != null
-                                ? snoozeWakeLabel(thread.snoozedUntil, {
-                                    now: new Date().toISOString(),
-                                  })
-                                : null
+                              section === "snoozed" && thread.snoozeCondition != null
+                                ? eventSnoozeLabel(thread.snoozeCondition)
+                                : section === "snoozed" && thread.snoozedUntil != null
+                                  ? snoozeWakeLabel(thread.snoozedUntil, {
+                                      now: new Date().toISOString(),
+                                    })
+                                  : null
                             }
                             wokeAt={threadWokeAt(thread, { now: snoozeNow })}
                             isActive={routeRowThreadKey === threadKey}

@@ -76,6 +76,19 @@ function makeQueuedTurnShell(overrides: Partial<QueuedTurnShell> = {}): QueuedTu
 }
 
 describe("effectiveSnoozed", () => {
+  it("keeps event snoozes without a timer and preserves early user-request wakes", () => {
+    const shell = {
+      ...makeShell({}),
+      snoozedAt: SNOOZED_AT,
+      snoozeCondition: { kind: "jira" as const, issueKey: "RET-1234" },
+    };
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+    expect(threadWokeAt(shell, { now: NOW })).toBeNull();
+    expect(effectiveSnoozed({ ...shell, hasPendingApprovals: true }, { now: NOW })).toBe(false);
+    expect(effectiveSnoozed({ ...shell, pendingGuestMessageCount: 1 }, { now: NOW })).toBe(false);
+    expect(threadWokeAt({ ...makeShell({}), lastEventSnoozeWakeAt: NOW }, { now: NOW })).toBe(NOW);
+  });
+
   it("never hides on malformed wake data", () => {
     expect(effectiveSnoozed(makeShell({ snoozedUntil: "not-a-date" }), { now: NOW })).toBe(false);
   });

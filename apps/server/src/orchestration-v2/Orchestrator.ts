@@ -23,6 +23,7 @@ import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type ChatAttachment,
   CommandId,
+  eventSnoozeAllowed,
   type GuestMessageId,
   isCompactionCommandMessage,
   isOrchestrationV2WorkActive,
@@ -3076,6 +3077,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       settledOverride: null,
       settledAt: null,
       snoozedUntil: null,
+      snoozeCondition: null,
+      snoozeRequestId: null,
       snoozedAt: null,
       lastVisitedAt: null,
       deletedAt: null,
@@ -3714,15 +3717,76 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
     }
+    if (
+      command.type === "thread.unsnooze" &&
+      command.reason === "event" &&
+      (thread.snoozeCondition == null ||
+        command.expectedSnoozeId === undefined ||
+        command.expectedSnoozeId !== thread.snoozeRequestId ||
+        command.snoozedAt === undefined ||
+        thread.snoozedAt == null ||
+        DateTime.formatIso(thread.snoozedAt) !== command.snoozedAt)
+    )
+      return;
     let snoozedUntil: DateTime.Utc | null = null;
     if (command.type === "thread.snooze") {
       const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"], {
         turnItemTypes: [],
       });
-      const parsedSnoozedUntil = DateTime.make(command.snoozedUntil);
+      const condition = command.snoozeCondition;
+      if ((condition === undefined) === (command.snoozedUntil === undefined)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Choose one snooze time or event.",
+        });
+      }
+      if (condition !== undefined) {
+        const project = yield* projects.get(thread.projectId).pipe(mapDispatchError(command));
+        const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+        if (
+          Option.isNone(project) ||
+          !eventSnoozeAllowed(settings.eventSnoozeRules, project.value, condition.kind)
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "This event snooze is not enabled for the project.",
+          });
+        }
+        if (
+          condition.kind === "pull-request" &&
+          !visibleThreadPullRequests(thread.pullRequests ?? []).some((link) =>
+            threadPullRequestKeysEqual(link, condition.pullRequest),
+          )
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Link the pull request to this thread before snoozing.",
+          });
+        }
+        if (
+          condition.kind === "jira" &&
+          (!settings.jiraSnooze.email.trim() ||
+            !settings.jiraSnooze.apiToken ||
+            !settings.jiraSnooze.baseUrl.startsWith("https://"))
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Configure Jira snoozing in Settings before snoozing on a ticket.",
+          });
+        }
+      }
+      const parsedSnoozedUntil =
+        command.snoozedUntil === undefined
+          ? Option.none<DateTime.Utc>()
+          : DateTime.make(command.snoozedUntil);
       if (
-        Option.isNone(parsedSnoozedUntil) ||
-        DateTime.toEpochMillis(parsedSnoozedUntil.value) <= DateTime.toEpochMillis(now)
+        condition === undefined &&
+        (Option.isNone(parsedSnoozedUntil) ||
+          DateTime.toEpochMillis(parsedSnoozedUntil.value) <= DateTime.toEpochMillis(now))
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -3763,7 +3827,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} has a queued run and cannot be snoozed.`,
         });
       }
-      snoozedUntil = parsedSnoozedUntil.value;
+      snoozedUntil = Option.getOrNull(parsedSnoozedUntil);
     }
     let markUnreadVisitedAt: DateTime.Utc | null = null;
     if (command.type === "thread.mark-unread") {
@@ -3811,9 +3875,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             pinOrderKey: null,
             activeOrderKey: null,
             snoozedUntil: null,
+            snoozeCondition: null,
+            snoozeRequestId: null,
             snoozedAt: null,
             updatedAt:
-              alreadySettled && thread.snoozedUntil == null && thread.snoozedAt == null
+              alreadySettled &&
+              thread.snoozedUntil == null &&
+              thread.snoozeCondition == null &&
+              thread.snoozedAt == null
                 ? thread.updatedAt
                 : now,
           };
@@ -3833,18 +3902,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             snoozedUntil,
+            snoozeCondition: command.snoozeCondition ?? null,
+            snoozeRequestId: command.snoozeCondition === undefined ? null : command.commandId,
+            lastEventSnoozeWakeAt: null,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: now,
             updatedAt: now,
           };
         }
         case "thread.unsnooze": {
-          const alreadyAwake = thread.snoozedUntil == null;
+          const alreadyAwake = thread.snoozedUntil == null && thread.snoozeCondition == null;
           return {
             ...thread,
             snoozedUntil: null,
+            snoozeCondition: null,
+            snoozeRequestId: null,
             snoozedAt: null,
             lastSnoozeWakeAt: alreadyAwake ? thread.lastSnoozeWakeAt : now,
+            lastEventSnoozeWakeAt: command.reason === "event" ? now : null,
+            ...(command.reason === "event"
+              ? { settledOverride: null, settledAt: null, unsettledAt: now }
+              : {}),
             updatedAt: alreadyAwake ? thread.updatedAt : now,
           };
         }
@@ -3858,7 +3936,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         case "thread.pin": {
           const alreadyPinned = thread.pinnedAt != null;
-          const promotes = thread.settledOverride === "settled" || thread.snoozedUntil != null;
+          const promotes =
+            thread.settledOverride === "settled" ||
+            thread.snoozedUntil != null ||
+            thread.snoozeCondition != null;
           return {
             ...thread,
             pinnedAt: alreadyPinned ? thread.pinnedAt : now,
@@ -3870,8 +3951,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
             ...(thread.settledOverride === "settled" ? { unsettledAt: now } : {}),
             snoozedUntil: null,
+            snoozeCondition: null,
+            snoozeRequestId: null,
             snoozedAt: null,
-            lastSnoozeWakeAt: thread.snoozedUntil == null ? thread.lastSnoozeWakeAt : now,
+            lastSnoozeWakeAt:
+              thread.snoozedUntil == null && thread.snoozeCondition == null
+                ? thread.lastSnoozeWakeAt
+                : now,
             updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
           };
         }
@@ -3919,7 +4005,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             lastVisitedAt: markUnreadVisitedAt,
             ...(snoozeExpired
-              ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: thread.snoozedUntil }
+              ? {
+                  snoozedUntil: null,
+                  snoozeCondition: null,
+                  snoozeRequestId: null,
+                  snoozedAt: null,
+                  lastSnoozeWakeAt: thread.snoozedUntil,
+                }
               : {}),
           };
         }
@@ -3946,6 +4038,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&
+            thread.snoozeCondition == null &&
             limitRecovery?.snooze === true &&
             Date.parse(limitRecovery.resetAt) > DateTime.toEpochMillis(now)
               ? {
@@ -3958,7 +4051,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   thread.snoozedUntil != null &&
                   DateTime.toEpochMillis(thread.snoozedUntil) ===
                     Date.parse(thread.limitRecovery.resetAt)
-                ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now }
+                ? {
+                    snoozedUntil: null,
+                    snoozeCondition: null,
+                    snoozeRequestId: null,
+                    snoozedAt: null,
+                    lastSnoozeWakeAt: now,
+                  }
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
@@ -5759,6 +5858,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.settledOverride === "settled" ||
         projection.thread.providerInstanceId !== run.providerInstanceId ||
         projection.runtimeRequests.some((request) => request.status === "pending") ||
+        projection.thread.snoozeCondition != null ||
         (projection.thread.snoozedUntil != null &&
           DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now))
       ) {
@@ -5872,11 +5972,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // only a message someone actually sent ends the snooze.
     const automaticWake =
       command.notification !== undefined || command.delegatedCompletion !== undefined;
-    if (projection.thread.snoozedUntil != null && !automaticWake) {
+    if (
+      (projection.thread.snoozedUntil != null || projection.thread.snoozeCondition != null) &&
+      !automaticWake
+    ) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         ...projection.thread,
         snoozedUntil: null,
+        snoozeCondition: null,
+        snoozeRequestId: null,
         snoozedAt: null,
         updatedAt: now,
       };
@@ -9131,7 +9236,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         !unchanged &&
         command.secretStatus === "saved" &&
-        projection.thread.snoozedUntil != null
+        (projection.thread.snoozedUntil != null || projection.thread.snoozeCondition != null)
       ) {
         yield* emit(
           events,
@@ -9141,7 +9246,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           providerInstanceId: projection.thread.providerInstanceId,
           occurredAt: now,
-          payload: { ...projection.thread, snoozedUntil: null, snoozedAt: null, updatedAt: now },
+          payload: {
+            ...projection.thread,
+            snoozedUntil: null,
+            snoozeCondition: null,
+            snoozeRequestId: null,
+            snoozedAt: null,
+            updatedAt: now,
+          },
         });
       }
       yield* emit(
@@ -9270,7 +9382,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
             type: "link_request",
           };
-      if (!unchanged && command.linkStatus === "linked" && projection.thread.snoozedUntil != null) {
+      if (
+        !unchanged &&
+        command.linkStatus === "linked" &&
+        (projection.thread.snoozedUntil != null || projection.thread.snoozeCondition != null)
+      ) {
         yield* emit(
           events,
           command,
@@ -9279,7 +9395,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           providerInstanceId: projection.thread.providerInstanceId,
           occurredAt: now,
-          payload: { ...projection.thread, snoozedUntil: null, snoozedAt: null, updatedAt: now },
+          payload: {
+            ...projection.thread,
+            snoozedUntil: null,
+            snoozeCondition: null,
+            snoozeRequestId: null,
+            snoozedAt: null,
+            updatedAt: now,
+          },
         });
       }
       yield* emit(
@@ -9707,13 +9830,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const thread = yield* projectionStore
           .getThread(command.threadId)
           .pipe(mapDispatchError(command));
-        if (thread.snoozedUntil != null) {
+        if (thread.snoozedUntil != null || thread.snoozeCondition != null) {
           yield* emitEvent({
             type: "thread.unsnoozed",
             threadId: command.threadId,
             providerInstanceId: thread.providerInstanceId,
             occurredAt: now,
-            payload: { ...thread, snoozedUntil: null, snoozedAt: null, updatedAt: now },
+            payload: {
+              ...thread,
+              snoozedUntil: null,
+              snoozeCondition: null,
+              snoozeRequestId: null,
+              snoozedAt: null,
+              updatedAt: now,
+            },
           });
         }
       }
@@ -13919,6 +14049,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (planned) =>
           planned.events.length > 0 ||
           isUnobservedAcknowledgement(command) ||
+          (command.type === "thread.unsnooze" && command.reason === "event") ||
           command.type === "thread.background-work.settle" ||
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||

@@ -1430,6 +1430,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const store = yield* ServerSecretStore.ServerSecretStore;
         const instanceId = ProviderInstanceId.make("antigravity_secrets");
         const saved = yield* service.updateSettings({
+          jiraSnooze: {
+            baseUrl: "https://jira.example.test",
+            email: "jira@example.test",
+            apiToken: "jira-secret",
+          },
           providerInstances: {
             [instanceId]: {
               driver: ProviderDriverKind.make("antigravity"),
@@ -1466,6 +1471,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           ],
         });
         const values = [
+          "jira-secret",
           "config-secret",
           "env-secret",
           "github-secret",
@@ -1486,6 +1492,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.include(JSON.stringify(client), "https://example.test");
         assert.include(JSON.stringify(client), "me@example.test");
         const echoed = yield* service.updateSettings({
+          jiraSnooze: client.jiraSnooze,
           providerInstances: client.providerInstances,
           sourceControlHosts: client.sourceControlHosts,
           usageLimitSources: client.usageLimitSources,
@@ -1753,6 +1760,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const hub = UsageLimitSourceId.make("hub");
         const router = ProviderInstanceId.make("openrouter");
         const withUsage = yield* serverSettings.updateSettings({
+          jiraSnooze: {
+            baseUrl: "https://jira.example.test",
+            email: "jira@example.test",
+            apiToken: usageReference,
+          },
           cloudSpeechCredentials: { openai: usageReference, xai: "literal-fixture" },
           textGenerators: {
             [router]: {
@@ -1817,11 +1829,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.equal(legacy.textGenerators[router]?.apiKey, SECRET_REDACTED);
         assert.equal(legacy.easDeviceHosts[0]?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.simlockDeviceHosts[0]?.agentToken, SECRET_REDACTED);
+        assert.equal(legacy.jiraSnooze.apiToken, SECRET_REDACTED);
         const configOf = (settings: ServerSettings, id: ProviderInstanceId) =>
           settings.providerInstances[id]?.config as Record<string, unknown> | undefined;
         assert.equal(configOf(legacy, antigravity)?.apiKey, SECRET_REDACTED);
         assert.equal(configOf(legacy, openCode)?.serverPassword, SECRET_REDACTED);
         const echoed = yield* serverSettings.updateSettings({
+          jiraSnooze: legacy.jiraSnooze,
           cloudSpeechCredentials: legacy.cloudSpeechCredentials,
           sourceControlHosts: legacy.sourceControlHosts,
           usageLimitSources: legacy.usageLimitSources,
@@ -1844,6 +1858,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         assert.deepEqual(echoed.easDeviceHosts[0]?.accessToken, easReference);
         assert.deepEqual(echoed.simlockDeviceHosts[0]?.agentToken, simlockReference);
+        assert.deepEqual(echoed.jiraSnooze.apiToken, usageReference);
         assert.deepEqual(configOf(echoed, antigravity)?.apiKey, antigravityReference);
         assert.deepEqual(configOf(echoed, openCode)?.serverPassword, openCodeReference);
         assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
@@ -1941,6 +1956,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "cloudSpeechCredentials.openrouter",
         "easDeviceHosts.[].accessToken",
         "simlockDeviceHosts.[].agentToken",
+        "jiraSnooze.apiToken",
         "usageLimitSources.*.managementKey",
         "textGenerators.*.apiKey",
       ]);

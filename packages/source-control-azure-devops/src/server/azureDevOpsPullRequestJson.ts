@@ -73,6 +73,9 @@ const RawPullRequestSchema = Schema.Struct({
 
 const RawThreadSchema = Schema.Struct({
   id: Schema.Int,
+  properties: Schema.optional(
+    Schema.NullOr(Schema.Record(Schema.String, Schema.Struct({ $value: Schema.Unknown }))),
+  ),
   isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
   threadContext: Schema.optional(
     Schema.NullOr(Schema.Struct({ filePath: Schema.optional(Schema.NullOr(Schema.String)) })),
@@ -301,9 +304,15 @@ export function decodeThreadsJson(
     const path = toRepositoryPath(thread.threadContext?.filePath);
     for (const comment of thread.comments ?? []) {
       const publishedDate = trimmed(comment.publishedDate);
+      const isSystem = comment.commentType?.trim().toLowerCase() === "system";
+      const vote = thread.properties?.CodeReviewVoteResult?.["$value"];
+      const approval =
+        isSystem &&
+        thread.properties?.CodeReviewThreadType?.["$value"] === "VoteUpdate" &&
+        (vote === "10" || vote === 10 || vote === "5" || vote === 5);
       if (
         comment.isDeleted === true ||
-        comment.commentType?.trim().toLowerCase() === "system" ||
+        (isSystem && !approval) ||
         (comment.content ?? "").trim().length === 0 ||
         publishedDate === null
       ) {
@@ -311,13 +320,13 @@ export function decodeThreadsJson(
       }
       comments.push({
         id: `${thread.id}:${comment.id ?? 0}`,
-        kind: path === null ? "issue-comment" : "review-comment",
+        kind: approval ? "review" : path === null ? "issue-comment" : "review-comment",
         author: toActor(comment.author),
         body: comment.content ?? "",
         createdAt: publishedDate,
         url: null,
         path,
-        reviewState: null,
+        reviewState: approval ? "APPROVED" : null,
       });
     }
   }

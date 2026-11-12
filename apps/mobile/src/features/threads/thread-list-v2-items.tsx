@@ -1,3 +1,7 @@
+import { useAtomValue } from "@effect/atom-react";
+import * as Schema from "effect/Schema";
+import { eventSnoozeAllowed, eventSnoozeLabel, ThreadSnoozeCondition } from "@t3tools/contracts";
+import { serverEnvironment } from "../../state/server";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -90,6 +94,8 @@ interface StatusLabel {
   readonly className: string;
   readonly iconTintClassName: string;
 }
+const isSnoozeCondition = Schema.is(ThreadSnoozeCondition);
+
 const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
   approval: {
     label: "Approval",
@@ -668,7 +674,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => void;
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
-  readonly onSnoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => void;
+  readonly onSnoozeThread: (
+    thread: EnvironmentThreadShell,
+    choice: string | import("@t3tools/contracts").ThreadSnoozeChoice,
+  ) => void;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
@@ -765,7 +774,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const rowAccessibilityLabel = `${thread.title}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
-  const timeLabel = props.timeLabel;
+  const timeLabel =
+    snoozedRow && thread.snoozeCondition != null
+      ? eventSnoozeLabel(thread.snoozeCondition)
+      : props.timeLabel;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const handleAcknowledgeWoke = useCallback(() => {
@@ -838,6 +850,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     now: props.snoozePresetMinute || snoozeGateNow,
     presets: props.snoozePresets,
   });
+  const eventSettings = useAtomValue(serverEnvironment.settingsValueAtom(thread.environmentId));
+  const eventConfig = useAtomValue(serverEnvironment.configValueAtom(thread.environmentId));
+  const eventRules =
+    eventConfig?.environment.capabilities.threadEventSnooze === true
+      ? eventSettings?.eventSnoozeRules
+      : undefined;
+  const eventPrLinks =
+    props.project && eventRules && eventSnoozeAllowed(eventRules, props.project, "pull-request")
+      ? thread.pullRequests.filter((link) => link.source !== "stack-dismissed")
+      : [];
+  const jiraSnoozeAllowed = Boolean(
+    props.project && eventRules && eventSnoozeAllowed(eventRules, props.project, "jira"),
+  );
   const snoozePresetActions = useMemo<MenuAction[]>(
     () => [
       ...snoozePresets.map((preset) => ({
@@ -846,8 +871,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         subtitle: preset.whenLabel,
       })),
       { id: "snooze:custom", title: "Custom…" },
+      ...eventPrLinks.map((link, index) => ({
+        id: `snooze:pr:${index}`,
+        title: `PR #${link.number}: approval or comment`,
+        image: PullRequestGlyph.pullRequest,
+      })),
+      ...(jiraSnoozeAllowed
+        ? [{ id: "snooze:jira", title: "Until a Jira comment…", image: "text.bubble" }]
+        : []),
     ],
-    [snoozePresets],
+    [snoozePresets, eventPrLinks, jiraSnoozeAllowed],
   );
   const reorderMenuItems = useMemo<MenuAction[]>(
     () =>
@@ -1041,6 +1074,39 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         copyTextWithHaptic(thread.id, { target: "thread-id" });
       }
       if (nativeEvent.event === "delete") handleDelete();
+      if (nativeEvent.event.startsWith("snooze:pr:")) {
+        const link = eventPrLinks[Number(nativeEvent.event.slice("snooze:pr:".length))];
+        if (link)
+          onSnoozeThread(thread, {
+            snoozeCondition: {
+              kind: "pull-request",
+              pullRequest: { host: link.host, repository: link.repository, number: link.number },
+            },
+          });
+        return;
+      }
+      if (nativeEvent.event === "snooze:jira" && jiraSnoozeAllowed) {
+        if (!eventSettings?.jiraSnooze?.email || !eventSettings?.jiraSnooze?.apiToken) {
+          Dialog.alert(
+            "Jira connection needed",
+            "Set up the Jira connection in web or desktop Settings → Snooze.",
+          );
+          return;
+        }
+        Dialog.prompt({
+          title: "Until a Jira comment",
+          message: "Enter a ticket key, such as RET-1234.",
+          initialValue: "",
+          confirmText: "Snooze",
+          onConfirm: (value) => {
+            const condition = { kind: "jira" as const, issueKey: value.trim().toUpperCase() };
+            if (isSnoozeCondition(condition))
+              onSnoozeThread(thread, { snoozeCondition: condition });
+            else Dialog.alert("Invalid ticket", "Enter a ticket key, such as RET-1234.");
+          },
+        });
+        return;
+      }
       if (nativeEvent.event === "snooze:custom") {
         setCustomSnoozeOpen(true);
         return;
@@ -1062,6 +1128,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     },
     [
       onNewThreadOnBranch,
+      eventPrLinks,
+      jiraSnoozeAllowed,
+      eventSettings,
+      onSnoozeThread,
       thread,
       handleArchive,
       handleDelete,
@@ -1183,6 +1253,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         </Text>
         <View className="flex-row items-center gap-1.5" style={{ minHeight: titleLineHeight }}>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+          {snoozedRow && thread.snoozeCondition != null ? (
+            <SymbolView
+              name={
+                thread.snoozeCondition.kind === "jira"
+                  ? "text.bubble"
+                  : PullRequestGlyph.pullRequest
+              }
+              size={12}
+              tintColorClassName={rowAppearance.mutedIconTintClassName}
+            />
+          ) : null}
           {pinnedRow ? (
             <SymbolView
               name="pin"
@@ -1484,6 +1565,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ) : null}
           </View>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+          {snoozedRow && thread.snoozeCondition != null ? (
+            <SymbolView
+              name={
+                thread.snoozeCondition.kind === "jira"
+                  ? "text.bubble"
+                  : PullRequestGlyph.pullRequest
+              }
+              size={12}
+              tintColorClassName={rowAppearance.mutedIconTintClassName}
+            />
+          ) : null}
           <Text
             className={cn(
               "text-sm tabular-nums",
@@ -1495,9 +1587,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             )}
             style={{ fontFamily: MONO_FONT }}
           >
-            {snoozedRow && props.snoozeWakeLabelText !== undefined
-              ? props.snoozeWakeLabelText
-              : timeLabel}
+            {snoozedRow && thread.snoozeCondition != null
+              ? eventSnoozeLabel(thread.snoozeCondition)
+              : snoozedRow && props.snoozeWakeLabelText !== undefined
+                ? props.snoozeWakeLabelText
+                : timeLabel}
           </Text>
         </View>
       </RowPressable>

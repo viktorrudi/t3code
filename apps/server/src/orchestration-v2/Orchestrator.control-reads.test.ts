@@ -35,6 +35,9 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
+import * as EventSnoozeReactor from "./EventSnoozeReactor.ts";
+import * as ProjectStore from "./ProjectStore.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -53,6 +56,7 @@ const adapter = {
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = Layer.mergeAll(
   layerDatabase,
+  ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
   ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
   EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
@@ -1666,4 +1670,244 @@ it.effect("dispatch records the command outcome and its duration", () =>
     assert.strictEqual((yield* successes).count - successesBefore, 1);
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "event snoozes survive projection reads and only matching new activity wakes the observed snooze",
+  () =>
+    Effect.gen(function* () {
+      const engine = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const projects = yield* ProjectStore.ProjectStoreV2;
+      const projectId = ProjectId.make("event-project");
+      const threadId = ThreadId.make("event-thread");
+      const now = DateTime.formatIso(yield* DateTime.now);
+      yield* projects.apply({
+        sequence: 1,
+        eventId: EventId.make("event-project-created"),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        occurredAt: now,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "project.created",
+        payload: {
+          projectId,
+          title: "Sensoneo",
+          workspaceRoot: "/repo",
+          scripts: [],
+          defaultModelSelection: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("event-thread-created"),
+        threadId,
+        projectId,
+        title: "Wait for review",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const pullRequest = { host: "github.com", repository: "acme/app", number: 12 };
+      yield* engine.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("event-pr-linked"),
+        threadId,
+        ...pullRequest,
+        url: "https://github.com/acme/app/pull/12",
+        source: "manual",
+      });
+      const snoozeCondition = { kind: "pull-request" as const, pullRequest };
+      yield* engine.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make("event-snooze"),
+        threadId,
+        snoozeCondition,
+      });
+      assert.deepInclude(yield* projections.getThreadShell(threadId), {
+        snoozeCondition,
+        snoozedUntil: null,
+      });
+      assert.deepEqual(
+        (yield* projections.getEventSnoozedThreads()).map((thread) => thread.id),
+        [threadId],
+      );
+      assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, {
+        snoozeCondition,
+      });
+      const oldSnoozedAt = now;
+      yield* engine.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make("event-resnooze"),
+        threadId,
+        snoozeCondition,
+      });
+      yield* engine.dispatch({
+        type: "thread.unsnooze",
+        commandId: CommandId.make("stale-event-wake"),
+        threadId,
+        reason: "event",
+        snoozedAt: oldSnoozedAt,
+        expectedSnoozeId: CommandId.make("event-snooze"),
+      });
+      assert.deepEqual((yield* projections.getThread(threadId)).snoozeCondition, snoozeCondition);
+      let createdAt = now;
+      let failJira = false;
+      let kind: "review" | "issue-comment" = "review";
+      let body = "";
+      const reactor = yield* EventSnoozeReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(EventSnoozeReactor.JiraSnoozeComments)({
+              latest: () =>
+                failJira
+                  ? Effect.fail(new EventSnoozeReactor.JiraSnoozeReadError({}))
+                  : Effect.succeed(createdAt),
+            }),
+            Layer.mock(PullRequestService.PullRequestService)({
+              invalidate: () => Effect.void,
+              activity: () =>
+                Effect.succeed({
+                  comments: [
+                    {
+                      id: "review",
+                      kind,
+                      author: null,
+                      body,
+                      createdAt,
+                      url: null,
+                      path: null,
+                      reviewState: "APPROVED",
+                    },
+                  ],
+                  commentCount: 1,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                }),
+            }),
+          ),
+        ),
+      );
+      yield* reactor.sweep;
+      assert.deepEqual((yield* projections.getThread(threadId)).snoozeCondition, snoozeCondition);
+      yield* TestClock.adjust("1 second");
+      createdAt = DateTime.formatIso(yield* DateTime.now);
+      yield* reactor.sweep;
+      assert.deepInclude(yield* projections.getThread(threadId), {
+        snoozeCondition: null,
+        snoozedUntil: null,
+        lastSnoozeWakeAt: yield* DateTime.now,
+      });
+      assert.deepInclude(yield* projections.getThreadShell(threadId), {
+        snoozeCondition: null,
+        lastEventSnoozeWakeAt: yield* DateTime.now,
+      });
+      assert.lengthOf((yield* projections.getThreadProjection(threadId)).runs, 0);
+      assert.isEmpty(yield* projections.getEventSnoozedThreads());
+
+      yield* engine.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("settled-before-event-snooze"),
+        threadId,
+      });
+      // The same reader handles an ordinary new comment without requiring an approval.
+      yield* engine.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make("comment-snooze"),
+        threadId,
+        snoozeCondition,
+      });
+      kind = "issue-comment";
+      body = "Please take a look";
+      yield* TestClock.adjust("1 second");
+      createdAt = DateTime.formatIso(yield* DateTime.now);
+      yield* reactor.sweep;
+      assert.deepInclude(yield* projections.getThread(threadId), {
+        snoozeCondition: null,
+        settledOverride: null,
+        settledAt: null,
+      });
+
+      const current = yield* projections.getThread(threadId);
+      const jiraCondition = { kind: "jira" as const, issueKey: "RET-1234" };
+      yield* projections.apply({
+        id: EventId.make("jira-snoozed"),
+        type: "thread.snoozed",
+        threadId,
+        occurredAt: yield* DateTime.now,
+        payload: {
+          ...current,
+          snoozeCondition: jiraCondition,
+          snoozeRequestId: CommandId.make("jira-snooze"),
+          snoozedAt: yield* DateTime.now,
+        },
+      });
+      yield* reactor.sweep;
+      assert.deepEqual((yield* projections.getThread(threadId)).snoozeCondition, jiraCondition);
+      yield* TestClock.adjust("1 second");
+      createdAt = DateTime.formatIso(yield* DateTime.now);
+      failJira = true;
+      yield* reactor.sweep;
+      assert.deepEqual((yield* projections.getThread(threadId)).snoozeCondition, jiraCondition);
+      failJira = false;
+      yield* reactor.sweep;
+      assert.isNull((yield* projections.getThread(threadId)).snoozeCondition);
+
+      const outsideId = ProjectId.make("outside-project");
+      yield* projects.apply({
+        sequence: 2,
+        eventId: EventId.make("outside-created"),
+        aggregateKind: "project",
+        aggregateId: outsideId,
+        occurredAt: now,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "project.created",
+        payload: {
+          projectId: outsideId,
+          title: "Other",
+          workspaceRoot: "/other",
+          scripts: [],
+          defaultModelSelection: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const outsideThread = ThreadId.make("outside-thread");
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("outside-thread-created"),
+        threadId: outsideThread,
+        projectId: outsideId,
+        title: "Other project",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const rejected = yield* engine
+        .dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make("outside-snooze"),
+          threadId: outsideThread,
+          snoozeCondition,
+        })
+        .pipe(Effect.result);
+      assert.isTrue(Result.isFailure(rejected));
+    }).pipe(Effect.provide(layerTest)),
 );

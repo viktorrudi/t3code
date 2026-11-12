@@ -333,7 +333,18 @@ local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
 
-A snoozed thread keeps working and stays hidden until its wake time, even while
+Projects enabled for event snoozing can also wait for a new approval or comment on a linked PR,
+or a new comment on a Jira ticket. Enter the Jira ticket key in the snooze menu; mobile asks
+for it after you select the Jira option. These waits check for updates every two minutes and
+bring the thread back without starting an agent turn. The snoozed row shows which event it awaits.
+
+Configure the project lists and Jira connection in **Settings → Threads → Snooze**.
+The initial project lists enable both event types for Sensoneo. Jira needs your account email
+and API token; only comments that account can read can wake a thread. On macOS, a token stored
+in the `t3-code-jira-snooze` Keychain item can be used by setting the token to
+`keychain:t3-code-jira-snooze`. The Keychain item’s account must match the Jira email.
+
+A snoozed thread keeps working and stays hidden until its wake time or event, even while
 its agent wakes itself for background work. It comes back early for an approval,
 a new question, a failed run, or a message or answer you send. You can snooze an existing
 question and answer when the thread wakes; the question stays unanswered.

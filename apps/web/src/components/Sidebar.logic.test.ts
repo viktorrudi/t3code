@@ -639,6 +639,13 @@ describe("getFallbackThreadIdAfterDelete", () => {
       "snoozed",
       { snoozedUntil: "2099-01-01T00:00:00.000Z", snoozedAt: "2026-03-09T10:06:00.000Z" },
     ],
+    [
+      "event snoozed",
+      {
+        snoozeCondition: { kind: "jira", issueKey: "RET-1234" },
+        snoozedAt: "2026-03-09T10:06:00.000Z",
+      },
+    ],
     ["settled", { settledOverride: "settled", settledAt: "2026-03-09T10:06:00.000Z" }],
     [
       "side chat",

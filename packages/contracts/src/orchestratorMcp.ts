@@ -1,3 +1,4 @@
+import { ThreadSnoozeCondition } from "./threadSnooze.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -379,6 +380,7 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  snoozeCondition: Schema.optional(Schema.NullOr(ThreadSnoozeCondition)),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
   itemCount: NonNegativeInt,
@@ -459,6 +461,7 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  snoozeCondition: Schema.optional(Schema.NullOr(ThreadSnoozeCondition)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

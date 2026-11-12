@@ -56,6 +56,7 @@ export function limitRecoveryCommand(
   }
   if (
     !recovery.autoResume ||
+    thread.snoozeCondition != null ||
     resetMs > nowMs ||
     (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
   )

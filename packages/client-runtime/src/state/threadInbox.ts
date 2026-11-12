@@ -100,6 +100,7 @@ type TrackedInboxThread = WorkingThreadInput &
       | "settledAt"
       | "snoozedAt"
       | "snoozedUntil"
+      | "snoozeCondition"
       | "activeOrderKey"
       | "pendingGuestMessageCount"
     >
@@ -196,6 +197,7 @@ export function createInboxReturnTracker() {
                 thread.settledAt,
                 thread.snoozedAt,
                 thread.snoozedUntil,
+                thread.snoozeCondition,
                 thread.activeOrderKey,
               ])
             : null;
