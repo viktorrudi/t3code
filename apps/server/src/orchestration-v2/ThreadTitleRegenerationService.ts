@@ -188,6 +188,7 @@ const make = Effect.gen(function* () {
         ...(inherited === undefined ? {} : { forkSource: inherited }),
         instructions: settings.threadTitleInstructions,
         modelSelection: settings.textGenerationModelSelection,
+        projectId: projection.thread.projectId,
       });
       const generatedTitle = result.title.trim();
       return generatedTitle === "New thread" ||

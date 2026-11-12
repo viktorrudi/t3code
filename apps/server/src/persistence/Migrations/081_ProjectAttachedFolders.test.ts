@@ -19,7 +19,7 @@ describe("081_ProjectAttachedFolders", () => {
       assert.equal(rows[0]?.additional_workspace_roots_json, "[]");
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
-  it.effect.each([61, 77, 80])(
+  it.effect.each([61, 77, 80, 81])(
     "upgrades fork migration %s without losing attached folders",
     (legacyId) =>
       Effect.gen(function* () {
@@ -35,14 +35,19 @@ describe("081_ProjectAttachedFolders", () => {
         const history = yield* sql<{
           readonly migration_id: number;
           readonly name: string;
-        }>`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id IN (61, 77, 80, 81) ORDER BY migration_id`;
+        }>`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id IN (61, 77, 80, 81, 82) ORDER BY migration_id`;
         assert.equal(projects[0]?.additional_workspace_roots_json, '["/admin","/docs"]');
         assert.deepEqual(history, [
           { migration_id: 61, name: "PullRequestReviewGuides" },
           { migration_id: 77, name: "RepairBooleanSettledOverride" },
           { migration_id: 80, name: "ScheduledTaskThreadMode" },
           { migration_id: 81, name: "ProjectAttachedFolders" },
+          { migration_id: 82, name: "ProjectionMessageSearchText" },
         ]);
+        const messageColumns = yield* sql<{
+          readonly name: string;
+        }>`PRAGMA table_info(orchestration_v2_projection_messages)`;
+        assert.isTrue(messageColumns.some((column) => column.name === "search_text"));
         assert.deepEqual(yield* runMigrations(), []);
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

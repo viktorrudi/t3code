@@ -84,6 +84,7 @@ import Migration0078 from "./Migrations/078_DropOrchestrationEventCorrelationInd
 import Migration0079 from "./Migrations/079_DelegatedRecoveryIndexes.ts";
 import Migration0080 from "./Migrations/080_ScheduledTaskThreadMode.ts";
 import Migration0081 from "./Migrations/081_ProjectAttachedFolders.ts";
+import Migration0082 from "./Migrations/082_ProjectionMessageSearchText.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -168,6 +169,8 @@ const migrationEntries = [
   [79, "DelegatedRecoveryIndexes", Migration0079],
   [80, "ScheduledTaskThreadMode", Migration0080],
   [81, "ProjectAttachedFolders", Migration0081],
+  // This fork shipped attached folders at 81; keep its history and run upstream's search migration next.
+  [82, "ProjectionMessageSearchText", Migration0082],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
