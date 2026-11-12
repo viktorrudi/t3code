@@ -7,6 +7,8 @@ import {
   WorktreeMcpHandoffInput,
   WorktreeMcpHandoffResult,
   WorktreeMcpStatusResult,
+  WorktreeMcpAttachInput,
+  WorktreeMcpAttachResult,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -24,6 +26,21 @@ const dependencies = [
 ];
 
 const WorktreeToolFailure = Schema.Union([WorktreeMcpFailure, OrchestratorMcpFailure]);
+
+const WorktreeAttachTool = Tool.make("t3_worktree_attach", {
+  description:
+    "Attach THIS thread to an existing Git worktree selected by a task or ticket workflow. Pass its absolute root path and recorded branch. Validates it belongs to this project's repository. Creates, removes and sets up nothing. Same workspace: already_attached, continue this turn. A different existing binding needs replace:true. Call before code edits and last in your turn: a changed workspace ends the live session; continuationPrompt resumes the remaining work there next turn. Without it the thread waits. Failed continuation needs a new message; do not repeat attachment to queue it. The skill owns worktree cleanup.",
+  parameters: WorktreeMcpAttachInput,
+  success: WorktreeMcpAttachResult,
+  failure: WorktreeToolFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Attach thread to an existing worktree")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
 
 const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
   description:
@@ -83,6 +100,7 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 export const WorktreeToolkit = Toolkit.make(
+  WorktreeAttachTool,
   WorktreeHandoffTool,
   WorktreeStatusTool,
   WorktreeListTool,

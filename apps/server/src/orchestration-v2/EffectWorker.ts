@@ -123,6 +123,9 @@ export const layerExecutor: Layer.Layer<
               .detach({
                 providerSessionId: effect.request.providerSessionId,
                 threadId: effect.threadId,
+                ...(effect.request.interruptionReason === undefined
+                  ? {}
+                  : { interruptionReason: effect.request.interruptionReason }),
                 ...(effect.request.detail === undefined ? {} : { detail: effect.request.detail }),
                 ...(effect.request.revokeMcpCredential === undefined
                   ? {}

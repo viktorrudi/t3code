@@ -90,6 +90,7 @@ const project: Project = {
 } as Project;
 
 interface HarnessOptions {
+  readonly additionalWorkspaceRoots?: ReadonlyArray<string>;
   readonly git?: Partial<GitWorkflowService.GitWorkflowService["Service"]>;
   readonly thread?: ThreadFixture | null;
   readonly threadReadError?: "projection" | "dispatch";
@@ -200,7 +201,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
       ? (Effect.fail("simulated project read failure") as never)
       : Effect.succeed(
           id === projectId && options.projectMissing !== true
-            ? Option.some(project)
+            ? Option.some({
+                ...project,
+                additionalWorkspaceRoots: options.additionalWorkspaceRoots,
+              })
             : Option.none(),
         ),
   );
@@ -396,6 +400,184 @@ const runStatus = (harness: ReturnType<typeof makeHarness>) =>
   }).pipe(Effect.provide(harness.layer));
 
 const decodeHandoffInput = Schema.decodeUnknownEffect(WorktreeMcpHandoffInput);
+
+describe("t3_worktree_attach", () => {
+  it.effect("adopts a skill worktree without creating or setting it up", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "skill-worktree-" });
+      const path = yield* fs.realPath(root);
+      yield* fs.writeFileString(`${path}/.git`, "gitdir: /repo/.git/worktrees/task");
+      const harness = makeHarness({
+        currentBranch: "task/feature/001",
+        existingBranchWorktreePath: path,
+      });
+      const service = yield* resolveService(harness);
+      const result = yield* service.attachExisting(harness.scope, {
+        path,
+        branch: "task/feature/001",
+        continuationPrompt: "Continue implementing the task.",
+      });
+      expect(result.status).toBe("attached");
+      expect(result.worktreePath).toBe(path);
+      expect(result.continuation.status).toBe("scheduled");
+      expect(harness.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "thread.metadata.update",
+          worktreePath: path,
+          branch: "task/feature/001",
+          expectedWorktreePath: null,
+        }),
+      );
+      expect(harness.createWorktree).not.toHaveBeenCalled();
+      expect(harness.runForThread).not.toHaveBeenCalled();
+      expect(harness.removeWorktree).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+  it.effect.each([
+    { label: "already attached", thread: "same", expected: "already_attached" },
+    { label: "different binding", thread: "other", error: "already_in_worktree" },
+    { label: "explicit replacement", thread: "other", replace: true, expected: "attached" },
+    { label: "archived thread", archivedAt: "2026-01-02T00:00:00.000Z", error: "invalid_request" },
+    { label: "branch mismatch", branch: "wrong", error: "invalid_request" },
+    { label: "another repository", registry: "other", error: "invalid_request" },
+    { label: "metadata race", dispatchFails: true, error: "operation_failed" },
+    { label: "continuation failure", continuation: "fails", expected: "attached" },
+    {
+      label: "capability denied",
+      capabilities: new Set<McpInvocationContext.McpCapability>(),
+      error: "capability_denied",
+    },
+  ] as const)("handles $label without modifying the checkout", (scenario) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "skill-attachment-" });
+      const path = yield* fs.realPath(root);
+      yield* fs.writeFileString(`${path}/.git`, "gitdir: /repo/.git/worktrees/task");
+      const harness = makeHarness({
+        currentBranch: "task/example/001",
+        existingBranchWorktreePath: "registry" in scenario ? "/repo/another-worktree" : path,
+        thread: {
+          branch: "thread" in scenario && scenario.thread === "same" ? "task/example/001" : null,
+          worktreePath:
+            "thread" in scenario
+              ? scenario.thread === "same"
+                ? path
+                : "/repo/previous-worktree"
+              : null,
+          ...("archivedAt" in scenario ? { archivedAt: scenario.archivedAt } : {}),
+        },
+        ...("dispatchFails" in scenario ? { dispatchFails: true } : {}),
+        ...("continuation" in scenario ? { continuation: scenario.continuation } : {}),
+        ...("capabilities" in scenario ? { capabilities: scenario.capabilities } : {}),
+      });
+      const service = yield* resolveService(harness);
+      const exit = yield* Effect.exit(
+        service.attachExisting(harness.scope, {
+          path,
+          branch: "branch" in scenario ? scenario.branch : "task/example/001",
+          ...("replace" in scenario ? { replace: true } : {}),
+          continuationPrompt: "Continue task example/001.",
+        }),
+      );
+      if ("error" in scenario) {
+        expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: scenario.error });
+        expect(harness.sendToThread).not.toHaveBeenCalled();
+      } else {
+        expect(Exit.isSuccess(exit)).toBe(true);
+        if (Exit.isSuccess(exit)) {
+          expect(exit.value.status).toBe(scenario.expected);
+          expect(exit.value.continuation.status).toBe(
+            "continuation" in scenario
+              ? "failed"
+              : scenario.expected === "already_attached"
+                ? "skipped"
+                : "scheduled",
+          );
+        }
+        if (scenario.expected === "already_attached") {
+          expect(harness.dispatch).not.toHaveBeenCalled();
+          expect(harness.sendToThread).not.toHaveBeenCalled();
+        }
+      }
+      expect(harness.createWorktree).not.toHaveBeenCalled();
+      expect(harness.removeWorktree).not.toHaveBeenCalled();
+      expect(harness.deleteLocalBranch).not.toHaveBeenCalled();
+      expect(harness.runForThread).not.toHaveBeenCalled();
+      expect(yield* fs.exists(`${path}/.git`)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("validates registered primary and attached repositories with real Git", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "attach-real-git-" });
+      const cwd = `${root}/repo`;
+      const worktree = `${root}/task`;
+      const branch = "task/example/001";
+      yield* fs.makeDirectory(cwd);
+      const command = (at: string, args: string[]) =>
+        git.execute({ operation: "attach-test", cwd: at, args });
+      yield* command(cwd, ["init", "-b", "main"]);
+      yield* command(cwd, ["config", "user.name", "Test"]);
+      yield* command(cwd, ["config", "user.email", "test@example.test"]);
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "base"]);
+      yield* command(cwd, ["worktree", "add", "-b", branch, worktree]);
+      yield* fs.symlink(worktree, `${root}/alias`);
+      yield* fs.makeDirectory(`${worktree}/nested`);
+      yield* fs.makeDirectory(`${root}/unrelated`);
+      yield* command(`${root}/unrelated`, ["init", "-b", branch]);
+      const harness = makeHarness({
+        currentBranch: branch,
+        additionalWorkspaceRoots: [cwd],
+        git: {
+          listRefs: (input) =>
+            input.cwd === workspaceRoot
+              ? Effect.succeed({
+                  refs: [],
+                  isRepo: true,
+                  hasPrimaryRemote: false,
+                  nextCursor: null,
+                  totalCount: 0,
+                })
+              : git.listRefs(input),
+        },
+      });
+      const service = yield* resolveService(harness);
+      for (const path of [
+        "relative",
+        `${root}/missing`,
+        cwd,
+        `${worktree}/nested`,
+        `${root}/unrelated`,
+      ]) {
+        expectTypedFailure(
+          yield* Effect.exit(service.attachExisting(harness.scope, { path, branch })),
+          {
+            _tag: "WorktreeMcpFailure",
+            code: "invalid_request",
+          },
+        );
+      }
+      const result = yield* service.attachExisting(harness.scope, {
+        path: `${root}/alias`,
+        branch,
+      });
+      expect(result.worktreePath).toBe(yield* fs.realPath(worktree));
+      expect(result.continuation.status).toBe("skipped");
+    }).pipe(
+      Effect.provide(
+        GitVcsDriver.layer.pipe(
+          Layer.provide(
+            ServerConfig.layerTest(process.cwd(), { prefix: "attach-real-git-config-" }),
+          ),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
+  );
+});
 
 describe("t3_worktree_handoff", () => {
   it.effect("reports a continuation failure without failing the handoff", () => {

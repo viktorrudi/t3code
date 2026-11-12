@@ -2674,28 +2674,39 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
   }),
 );
 
-it.effect("refreshes pull requests after a provider stream exits with an error", () =>
-  Effect.gen(function* () {
-    const { written, observed } = yield* captureRootRunTermination({
-      key: "pull-request-refresh:stream-error",
-      shouldFinalizeRun: () => Effect.succeed(true),
-      events: () =>
-        Stream.fail(
-          new ProviderAdapter.ProviderAdapterEventStreamError({
-            driver,
-            providerSessionId: ProviderSessionId.make("session:exited"),
-            cause: "provider process exited",
-          }),
-        ),
-    });
-    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
-    assert.deepEqual(
-      written.map((item) => item.type),
-      ["error"],
-    );
-    const error = written.find((item) => item.type === "error");
-    assert.include(error?.failure.message ?? "", "provider event stream closed unexpectedly");
-  }),
+it.effect.each([false, true])(
+  "settles provider stream exits, with deliberate interruption %s",
+  (interrupted) =>
+    Effect.gen(function* () {
+      const { written, observed } = yield* captureRootRunTermination({
+        key: "pull-request-refresh:stream-error",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.concat(
+            Stream.make(backgroundTurnItemEvent(ids, "dynamic_tool", "running", 1)),
+            Stream.fail(
+              new ProviderAdapter.ProviderAdapterEventStreamError({
+                driver,
+                providerSessionId: ProviderSessionId.make("session:exited"),
+                cause: "provider process exited",
+                ...(interrupted ? { interruptionReason: "Workspace changed." } : {}),
+              }),
+            ),
+          ),
+      });
+      assert.deepEqual(observed, [
+        interrupted ? "run:interrupted" : "run:failed",
+        "pull-requests-refreshed",
+      ]);
+      assert.deepEqual(
+        written.map((item) => item.type),
+        interrupted ? ["dynamic_tool", "run_interrupt_result"] : ["error"],
+      );
+      if (interrupted) assert.equal(written[0]?.status, "interrupted");
+      const error = written.find((item) => item.type === "error");
+      if (!interrupted)
+        assert.include(error?.failure.message ?? "", "provider event stream closed unexpectedly");
+    }),
 );
 
 it.effect("records a provider's input rejection at turn start in the terminal error", () =>

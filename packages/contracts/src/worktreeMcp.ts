@@ -63,6 +63,30 @@ export const WorktreeMcpContinuationStatus = Schema.Union([
 ]);
 export type WorktreeMcpContinuationStatus = typeof WorktreeMcpContinuationStatus.Type;
 
+export const WorktreeMcpAttachInput = Schema.Struct({
+  path: TrimmedNonEmptyString.annotate({
+    description: "Absolute path of an existing Git worktree.",
+  }),
+  branch: TrimmedNonEmptyString.annotate({
+    description: "Expected branch from the task or ticket record; must match Git.",
+  }),
+  replace: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Explicitly replace a different thread worktree. Default false.",
+    }),
+  ),
+  continuationPrompt: WorktreeMcpHandoffInput.fields.continuationPrompt,
+});
+export type WorktreeMcpAttachInput = typeof WorktreeMcpAttachInput.Type;
+
+export const WorktreeMcpAttachResult = Schema.Struct({
+  status: Schema.Literals(["attached", "already_attached"]),
+  worktreePath: TrimmedNonEmptyString,
+  branch: TrimmedNonEmptyString,
+  continuation: WorktreeMcpContinuationStatus,
+});
+export type WorktreeMcpAttachResult = typeof WorktreeMcpAttachResult.Type;
+
 export const WorktreeMcpHandoffResult = Schema.Struct({
   worktreePath: TrimmedNonEmptyString,
   branch: TrimmedNonEmptyString,

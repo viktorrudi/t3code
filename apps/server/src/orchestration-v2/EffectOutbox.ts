@@ -37,6 +37,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
     providerSessionId: ProviderSessionId,
+    interruptionReason: Schema.optional(Schema.String),
     detail: Schema.optional(Schema.String),
     revokeMcpCredential: Schema.optional(Schema.Boolean),
   }),

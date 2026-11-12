@@ -403,6 +403,7 @@ export class ProviderAdapterEventStreamError extends Schema.TaggedError<Provider
   {
     driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
+    interruptionReason: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

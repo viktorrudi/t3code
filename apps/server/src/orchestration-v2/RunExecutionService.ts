@@ -547,6 +547,11 @@ export class RunExecutionIngestError extends Schema.TaggedError<RunExecutionInge
   }
 }
 
+const isRunExecutionIngestError = Schema.is(RunExecutionIngestError);
+const isProviderAdapterEventStreamError = Schema.is(
+  ProviderAdapter.ProviderAdapterEventStreamError,
+);
+
 export const RunExecutionServiceV2Error = Schema.Union([
   RunExecutionStartError,
   RunExecutionIngestError,
@@ -631,6 +636,7 @@ export const layer: Layer.Layer<
         readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
         // Root turn snapshot written with the run when T3 ends the run itself.
         readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
+        readonly abandonedTurnItems?: ReadonlyArray<OrchestrationV2TurnItem>;
         readonly terminal: ProviderTerminalEvent;
         readonly completedAt?: DateTime.Utc;
         readonly failureItemPersisted: boolean;
@@ -759,6 +765,25 @@ export const layer: Layer.Layer<
               : [],
           events: [
             ...cascadedSubagentEvents,
+            ...(yield* Effect.forEach(input.abandonedTurnItems ?? [], (item) =>
+              Effect.gen(function* () {
+                return {
+                  id: yield* allocateEventId(),
+                  type: "turn-item.updated" as const,
+                  threadId: input.run.threadId,
+                  runId: input.run.id,
+                  nodeId: input.rootNode.id,
+                  providerInstanceId: input.run.providerInstanceId,
+                  occurredAt: completedAt,
+                  payload: {
+                    ...item,
+                    status: "interrupted" as const,
+                    completedAt,
+                    updatedAt: completedAt,
+                  },
+                };
+              }),
+            )),
             ...(input.abandonedProviderTurn === undefined
               ? []
               : [
@@ -1073,6 +1098,7 @@ export const layer: Layer.Layer<
           ReadonlySet<OrchestrationV2TurnItem["id"]>
         >(new Set(inheritedBackgroundTurnItemsById.keys()));
         const openRunOwnedSubagents = yield* Ref.make(emptyOpenRunOwnedSubagentProjection());
+        const openRootTools = new Map<TurnItemId, OrchestrationV2TurnItem>();
         const finalizeRootRun = Effect.fn("RunExecutionService.finalizeRootRun")(function* (
           terminal: ProviderTerminalEvent,
         ) {
@@ -1205,6 +1231,16 @@ export const layer: Layer.Layer<
           }
           if (event.type === "turn_item.updated") {
             const belongsToRootRun = event.turnItem.runId === input.run.id;
+            if (
+              belongsToRootRun &&
+              event.turnItem.threadId === input.run.threadId &&
+              (event.turnItem.type === "command_execution" ||
+                event.turnItem.type === "dynamic_tool")
+            ) {
+              if (isSettledTurnItemStatus(event.turnItem.status))
+                openRootTools.delete(event.turnItem.id);
+              else openRootTools.set(event.turnItem.id, event.turnItem);
+            }
             const belongsToOwnedChildThread =
               event.turnItem.threadId !== input.run.threadId &&
               routing.ownedThreadIds.has(event.turnItem.threadId);
@@ -1547,58 +1583,69 @@ export const layer: Layer.Layer<
               }),
             ),
             // Server shutdown interrupts the subscription and leaves the run to
-            // restart recovery; every other failure fails the run.
+            // restart recovery; planned workspace detaches settle as interruptions.
             Effect.catchCauseIf(
               (cause) => !Cause.hasInterruptsOnly(cause),
               (cause) =>
                 Effect.gen(function* () {
                   const completedAt = yield* DateTime.now;
-                  yield* Effect.logWarning("orchestration V2 provider event ingestion failed", {
-                    runId: input.run.id,
-                    cause,
-                  });
                   if (yield* Ref.get(rootRunFinalized)) return;
+                  const squashed = Cause.squash(cause);
+                  const streamError = isRunExecutionIngestError(squashed)
+                    ? squashed.cause
+                    : squashed;
+                  const interruptionReason = isProviderAdapterEventStreamError(streamError)
+                    ? streamError.interruptionReason
+                    : undefined;
+                  if (interruptionReason === undefined) {
+                    yield* Effect.logWarning("orchestration V2 provider event ingestion failed", {
+                      runId: input.run.id,
+                      cause,
+                    });
+                  }
                   const providerThread = yield* Ref.get(latestProviderThread);
                   const routing = yield* Ref.get(eventRouting);
                   const rootProviderTurn = yield* Ref.get(latestRootProviderTurn);
                   // Stop background work too; the failed consumer cannot persist terminal events.
                   const abandonedProviderTurn =
                     routing.rootProviderTurnId !== null && !routing.rootTurnEnded
-                      ? yield* input.session
-                          .interruptTurn({
-                            providerThread,
-                            providerTurnId: routing.rootProviderTurnId,
-                            requestRuntimeRestart: true,
-                          })
-                          .pipe(
-                            Effect.as(true),
-                            Effect.catchCauseIf(
-                              (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
-                              (interruptCause) =>
-                                Effect.logWarning(
-                                  "orchestration V2 failed to interrupt turn after ingestion failure",
-                                  { runId: input.run.id, cause: interruptCause },
-                                ).pipe(Effect.as(false)),
-                            ),
-                            // A failed interrupt leaves the stored turn running so the next start
-                            // retries it. The snapshot is cached before it is published, so it may
-                            // not be stored: replay a terminal one as-is.
-                            Effect.map((interrupted) =>
-                              !interrupted || rootProviderTurn === null
-                                ? null
-                                : isTerminalProviderTurnStatus(rootProviderTurn.status)
-                                  ? rootProviderTurn
-                                  : {
-                                      ...rootProviderTurn,
-                                      status: "interrupted" as const,
-                                      completedAt,
-                                    },
-                            ),
-                          )
+                      ? yield* (
+                          interruptionReason === undefined
+                            ? input.session
+                                .interruptTurn({
+                                  providerThread,
+                                  providerTurnId: routing.rootProviderTurnId,
+                                  requestRuntimeRestart: true,
+                                })
+                                .pipe(Effect.as(true))
+                            : Effect.succeed(true)
+                        ).pipe(
+                          Effect.catchCauseIf(
+                            (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
+                            (interruptCause) =>
+                              Effect.logWarning(
+                                "orchestration V2 failed to interrupt turn after ingestion failure",
+                                { runId: input.run.id, cause: interruptCause },
+                              ).pipe(Effect.as(false)),
+                          ),
+                          // A failed interrupt leaves the stored turn running so the next start
+                          // retries it. The snapshot is cached before it is published, so it may
+                          // not be stored: replay a terminal one as-is.
+                          Effect.map((interrupted) =>
+                            !interrupted || rootProviderTurn === null
+                              ? null
+                              : isTerminalProviderTurnStatus(rootProviderTurn.status)
+                                ? rootProviderTurn
+                                : {
+                                    ...rootProviderTurn,
+                                    status: "interrupted" as const,
+                                    completedAt,
+                                  },
+                          ),
+                        )
                       : null;
                   const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
                   const openSubagents = yield* Ref.get(openRunOwnedSubagents);
-                  const squashed = Cause.squash(cause);
                   let nextRetryWarningAt = completedAt;
                   yield* writeFinalRunEvents({
                     run: input.run,
@@ -1612,17 +1659,38 @@ export const layer: Layer.Layer<
                     },
                     openRunOwnedSubagents: openSubagents,
                     ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
+                    ...(interruptionReason === undefined
+                      ? {}
+                      : { abandonedTurnItems: [...openRootTools.values()] }),
                     completedAt,
-                    terminal: makeFailedTerminalEvent(
-                      makeProviderFailure({
-                        cause: squashed,
-                        message:
-                          knownProviderFailureMessage(squashed) ??
-                          userFacingDatabaseErrorMessage(squashed),
-                        class: "unknown",
-                      }),
-                      latestItemOrdinal + 1,
-                    ),
+                    terminal:
+                      interruptionReason === undefined
+                        ? makeFailedTerminalEvent(
+                            makeProviderFailure({
+                              cause: squashed,
+                              message:
+                                knownProviderFailureMessage(squashed) ??
+                                userFacingDatabaseErrorMessage(squashed),
+                              class: "unknown",
+                            }),
+                            latestItemOrdinal + 1,
+                          )
+                        : {
+                            type: "turn.terminal",
+                            driver: providerThread.driver,
+                            providerThreadId: providerThread.id,
+                            providerTurnId:
+                              routing.rootProviderTurnId ??
+                              idAllocator.derive.providerTurn({
+                                driver: providerThread.driver,
+                                nativeTurnId: `interrupted:${input.attempt.id}`,
+                              }),
+                            runOrdinal: input.run.ordinal,
+                            status: "interrupted",
+                            failure: null,
+                            reason: interruptionReason,
+                            threadDisposition: "reusable",
+                          },
                     failureItemPersisted: false,
                     refreshAfterTurn,
                   }).pipe(

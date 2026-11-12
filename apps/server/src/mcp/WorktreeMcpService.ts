@@ -1,6 +1,9 @@
 import {
   CommandId,
+  getProjectWorkspaceRoots,
   type GitCommandError,
+  type WorktreeMcpAttachInput,
+  type WorktreeMcpAttachResult,
   MessageId,
   type ProjectId,
   WorktreeMcpFailure,
@@ -22,6 +25,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 
+import { resolveExistingWorktree } from "./personal/ExistingWorktree.ts";
+
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -33,6 +38,10 @@ import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocati
 export class WorktreeMcpService extends Context.Service<
   WorktreeMcpService,
   {
+    readonly attachExisting: (
+      scope: McpInvocationScope,
+      input: WorktreeMcpAttachInput,
+    ) => Effect.Effect<WorktreeMcpAttachResult, WorktreeMcpFailure>;
     readonly handoff: (
       scope: McpInvocationScope,
       input: WorktreeMcpHandoffInput,
@@ -400,29 +409,131 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const attachExisting: WorktreeMcpService["Service"]["attachExisting"] = Effect.fn(
+    "WorktreeMcpService.attachExisting",
+  )(function* (callerScope, input) {
+    yield* requireCapability(callerScope);
+    const scope = yield* requireThreadScope(callerScope);
+    return yield* withHandoffGuard(
+      scope,
+      Effect.gen(function* () {
+        const projection = yield* loadThread(scope);
+        if (projection.thread.archivedAt !== null) {
+          return yield* failure("invalid_request", "Archived threads cannot change workspace.");
+        }
+        const project = yield* loadProject(scope, projection.thread.projectId);
+        const { worktreePath, branch } = yield* resolveExistingWorktree({
+          ...input,
+          projectRoots: getProjectWorkspaceRoots(project),
+        }).pipe(
+          Effect.provideService(GitWorkflowService.GitWorkflowService, gitWorkflow),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+        );
+        const currentPath = projection.thread.worktreePath;
+        const currentRealPath =
+          currentPath === null
+            ? null
+            : yield* fileSystem.realPath(currentPath).pipe(Effect.orElseSucceed(() => currentPath));
+        if (currentRealPath === worktreePath && projection.thread.branch === branch) {
+          return {
+            status: "already_attached",
+            worktreePath,
+            branch,
+            continuation: { status: "skipped" },
+          } as const;
+        }
+        if (currentPath !== null && currentRealPath !== worktreePath && input.replace !== true) {
+          return yield* failure(
+            "already_in_worktree",
+            "This thread already has a different worktree. Pass replace only when intentionally changing tasks; neither checkout will be removed.",
+          );
+        }
+        const ids = yield* handoffIds(scope);
+        // Binding detaches the caller; finish the durable continuation even if it is interrupted.
+        return yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            yield* threadManagement
+              .dispatch({
+                type: "thread.metadata.update",
+                commandId: ids.commandId,
+                threadId: scope.thread.threadId,
+                worktreePath,
+                branch,
+                expectedWorktreePath: currentPath,
+                expectedBranch: projection.thread.branch,
+              })
+              .pipe(asOperationFailed("Unable to attach the thread to the worktree"));
+            const continuation: WorktreeMcpContinuationStatus =
+              input.continuationPrompt === undefined || currentRealPath === worktreePath
+                ? { status: "skipped" }
+                : yield* threadManagement
+                    .sendToThread({
+                      projectId: project.id,
+                      commandId: ids.continuationCommandId,
+                      threadId: scope.thread.threadId,
+                      messageId: ids.continuationMessageId,
+                      text: input.continuationPrompt,
+                      attachments: [],
+                      mode: "queue",
+                      createdBy: "agent",
+                      creationSource: "mcp",
+                    })
+                    .pipe(
+                      Effect.map(
+                        (result) => ({ status: "scheduled", delivery: result.delivery }) as const,
+                      ),
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning("worktree attachment continuation failed", {
+                          threadId: scope.thread.threadId,
+                        }).pipe(
+                          Effect.as({
+                            status: "failed",
+                            detail: errorMessage(Cause.squash(cause)),
+                          } as const),
+                        ),
+                      ),
+                    );
+            yield* vcsStatusBroadcaster
+              .refreshStatus(worktreePath)
+              .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach);
+            return {
+              status: currentRealPath === worktreePath ? "already_attached" : "attached",
+              worktreePath,
+              branch,
+              continuation,
+            } as const;
+          }),
+        );
+      }),
+    );
+  });
+
+  const withHandoffGuard = <A, E, R>(
+    scope: McpThreadInvocationScope,
+    action: Effect.Effect<A, E, R>,
+  ) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.suspend((): Effect.Effect<A, E | WorktreeMcpFailure, R> => {
+        if (handoffThreadsInFlight.has(scope.thread.threadId)) {
+          return Effect.fail(
+            failure(
+              "handoff_in_progress",
+              "A worktree transition is already in progress for this thread.",
+            ),
+          );
+        }
+        handoffThreadsInFlight.add(scope.thread.threadId);
+        return restore(action).pipe(
+          Effect.ensuring(Effect.sync(() => handoffThreadsInFlight.delete(scope.thread.threadId))),
+        );
+      }),
+    );
+
   const handoff: WorktreeMcpService["Service"]["handoff"] = Effect.fn("WorktreeMcpService.handoff")(
     function* (callerScope, input) {
       yield* requireCapability(callerScope);
       const scope = yield* requireThreadScope(callerScope);
-      // Acquire and register cleanup atomically so cancellation cannot strand the guard until restart.
-      return yield* Effect.uninterruptibleMask((restore) =>
-        Effect.suspend(() => {
-          if (handoffThreadsInFlight.has(scope.thread.threadId)) {
-            return Effect.fail(
-              failure(
-                "handoff_in_progress",
-                `A worktree handoff is already in progress for thread '${scope.thread.threadId}'.`,
-              ),
-            );
-          }
-          handoffThreadsInFlight.add(scope.thread.threadId);
-          return restore(performHandoff(scope, input)).pipe(
-            Effect.ensuring(
-              Effect.sync(() => handoffThreadsInFlight.delete(scope.thread.threadId)),
-            ),
-          );
-        }),
-      );
+      return yield* withHandoffGuard(scope, performHandoff(scope, input));
     },
   );
 
@@ -457,7 +568,7 @@ const make = Effect.gen(function* () {
     return yield* gitWorkflow.listRefs({ ...refs, cwd });
   });
 
-  return WorktreeMcpService.of({ handoff, status, listRefs });
+  return WorktreeMcpService.of({ handoff, attachExisting, status, listRefs });
 });
 
 export const layer: Layer.Layer<

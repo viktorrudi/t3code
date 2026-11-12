@@ -191,6 +191,7 @@ export interface ProviderSessionManagerV2Shape {
   readonly detach: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly threadId: ThreadId;
+    readonly interruptionReason?: string;
     readonly detail?: string;
     readonly revokeMcpCredential?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
@@ -564,10 +565,12 @@ export const layerWithOptions = (
       const failSubscribers = Effect.fn("ProviderSessionManager.failSubscribers")(function* (
         entry: LiveSessionEntry,
         detail: string,
+        interruptionReason?: string,
       ) {
         const error = new ProviderAdapter.ProviderAdapterEventStreamError({
           driver: entry.runtime.driver,
           providerSessionId: entry.runtime.providerSessionId,
+          ...(interruptionReason === undefined ? {} : { interruptionReason }),
           cause: detail,
         });
         const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
@@ -1054,6 +1057,7 @@ export const layerWithOptions = (
       const releaseEntry = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly reason: ProviderSessionReleaseReason;
+        readonly interruptionReason?: string;
         readonly detail?: string;
         readonly detachedThreadId?: ThreadId;
         readonly cancelIdleFiber?: boolean;
@@ -1087,6 +1091,7 @@ export const layerWithOptions = (
                     yield* failSubscribers(
                       entry,
                       input.detail ?? `Provider session released: ${input.reason}.`,
+                      input.interruptionReason,
                     );
                   }
                   const closeExit = yield* closeScopeWithin(entry.scope, {
@@ -2781,6 +2786,9 @@ export const layerWithOptions = (
               yield* releaseEntry({
                 providerSessionId: input.providerSessionId,
                 reason: "manual_shutdown",
+                ...(input.interruptionReason === undefined
+                  ? {}
+                  : { interruptionReason: input.interruptionReason }),
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
                 detachedThreadId: input.threadId,
               });
