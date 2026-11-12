@@ -1329,10 +1329,15 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+const DEFAULT_JIRA_SNOOZE_BASE_URL = "https://sensoneosk.atlassian.net";
+
+// Each field defaults, so a settings write that strips default values can still encode.
 export const JiraSnoozeSettings = Schema.Struct({
-  baseUrl: Schema.String,
-  email: Schema.String,
-  apiToken: SettingsSecretValue.pipe(secretSetting),
+  baseUrl: Schema.String.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_JIRA_SNOOZE_BASE_URL)),
+  ),
+  email: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  apiToken: SettingsSecretValue.pipe(Schema.withDecodingDefault(Effect.succeed("")), secretSetting),
 });
 
 const CloudSpeechCredential = SettingsSecretValue.pipe(
@@ -1440,7 +1445,7 @@ export const ServerSettings = Schema.Struct({
   ),
   jiraSnooze: JiraSnoozeSettings.pipe(
     Schema.withDecodingDefault(
-      Effect.succeed({ baseUrl: "https://sensoneosk.atlassian.net", email: "", apiToken: "" }),
+      Effect.succeed({ baseUrl: DEFAULT_JIRA_SNOOZE_BASE_URL, email: "", apiToken: "" }),
     ),
   ),
   snoozePresets: SnoozePresetSettings.pipe(

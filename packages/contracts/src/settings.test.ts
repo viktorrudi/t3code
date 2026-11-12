@@ -347,6 +347,19 @@ describe("provider enabled defaults", () => {
   });
 });
 
+describe("ServerSettings.jiraSnooze", () => {
+  it("encodes the sparse form the settings file stores and decodes it back", () => {
+    // The settings writer strips values equal to their defaults before encoding.
+    const sparse = { jiraSnooze: { email: "dev@example.com" } } as unknown as ServerSettings;
+    const encoded = encodeServerSettings(sparse);
+    expect(decodeServerSettings(encoded).jiraSnooze).toEqual({
+      baseUrl: "https://sensoneosk.atlassian.net",
+      email: "dev@example.com",
+      apiToken: "",
+    });
+  });
+});
+
 describe("ServerSettings worktree defaults", () => {
   it("defaults the thread env mode to inherit and keeps stored values", () => {
     expect(decodeServerSettings({}).defaultThreadEnvMode).toBeNull();
