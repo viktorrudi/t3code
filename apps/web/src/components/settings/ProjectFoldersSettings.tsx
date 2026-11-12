@@ -29,15 +29,12 @@ export function ProjectFoldersSettings({
   const save = async (workspaceRoot: string, additionalWorkspaceRoots: ReadonlyArray<string>) => {
     if (saving || cannotEdit) return;
     setSaving(true);
-    try {
-      const result = await updateProject({
-        environmentId: project.environmentId,
-        input: { projectId: project.id, workspaceRoot, additionalWorkspaceRoots },
-      });
-      if (result._tag !== "Failure") setPath("");
-    } finally {
-      setSaving(false);
-    }
+    const result = await updateProject({
+      environmentId: project.environmentId,
+      input: { projectId: project.id, workspaceRoot, additionalWorkspaceRoots },
+    });
+    if (result._tag !== "Failure") setPath("");
+    setSaving(false);
   };
   const attach = () => {
     const next = path.trim();

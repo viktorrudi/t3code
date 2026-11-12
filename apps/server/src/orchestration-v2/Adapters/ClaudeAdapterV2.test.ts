@@ -8348,7 +8348,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("reports the settings directory of a reused Claude query", () =>
+  it.effect("reports settings for reused queries and reopens when the workspace changes", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -8367,11 +8367,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }
       const harness = yield* makeWakeHarnessWithOptions({
         settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home },
+        freshQueueOnReopen: true,
+        close: (messages) => Queue.shutdown(messages),
       });
       let firstOptions: ReturnType<typeof harness.getOpenedOptions>;
       for (const [ordinal, cwd] of [
         [1, first],
-        [2, second],
+        [2, first],
+        [3, second],
       ] as const) {
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -8389,9 +8392,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         if (ordinal === 1) firstOptions = harness.getOpenedOptions();
-        else assert.strictEqual(harness.getOpenedOptions(), firstOptions);
-        yield* Queue.offer(
-          harness.sdkMessages,
+        else if (ordinal === 2) assert.strictEqual(harness.getOpenedOptions(), firstOptions);
+        else assert.notStrictEqual(harness.getOpenedOptions(), firstOptions);
+        yield* harness.offerAndWait(
           usageSnapshotFrame(
             `msg_cwd_${ordinal}`,
             `00000000-0000-4000-8000-00000000080${ordinal}`,
@@ -8402,8 +8405,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             },
           ),
         );
-        yield* Queue.offer(
-          harness.sdkMessages,
+        yield* harness.offerAndWait(
           makeResultFrame({
             uuid: `00000000-0000-4000-8000-00000000081${ordinal}`,
             result: "Done.",
@@ -8417,7 +8419,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ? [event.providerTurn.tokenUsage.autoCompactThreshold]
             : [],
         ),
-        [117_000, 117_000],
+        [117_000, 117_000, 147_000],
       );
     }).pipe(
       Effect.provide(
