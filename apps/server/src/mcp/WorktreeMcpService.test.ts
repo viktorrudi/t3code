@@ -90,6 +90,7 @@ const project: Project = {
 } as Project;
 
 interface HarnessOptions {
+  readonly t3BaseDir?: string;
   readonly additionalWorkspaceRoots?: ReadonlyArray<string>;
   readonly git?: Partial<GitWorkflowService.GitWorkflowService["Service"]>;
   readonly thread?: ThreadFixture | null;
@@ -337,6 +338,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
         } satisfies Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>),
         NodeServices.layer,
         NodeCrypto.layer,
+        // Only the managed-worktree check reads config; a full test config builds asynchronously.
+        Layer.succeed(ServerConfig.ServerConfig, {
+          worktreesDir: `${options.t3BaseDir ?? "/nonexistent-t3-home"}/worktrees`,
+        } as ServerConfig.ServerConfig["Service"]),
         options.existsFails
           ? FileSystem.layerNoop({
               exists: (path) =>
@@ -441,6 +446,7 @@ describe("t3_worktree_attach", () => {
     { label: "archived thread", archivedAt: "2026-01-02T00:00:00.000Z", error: "invalid_request" },
     { label: "branch mismatch", branch: "wrong", error: "invalid_request" },
     { label: "another repository", registry: "other", error: "invalid_request" },
+    { label: "T3-managed checkout", managed: true, error: "invalid_request" },
     { label: "metadata race", dispatchFails: true, error: "operation_failed" },
     { label: "continuation failure", continuation: "fails", expected: "attached" },
     {
@@ -451,10 +457,14 @@ describe("t3_worktree_attach", () => {
   ] as const)("handles $label without modifying the checkout", (scenario) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "skill-attachment-" });
-      const path = yield* fs.realPath(root);
+      const root = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "skill-attachment-" }),
+      );
+      const path = "managed" in scenario ? `${root}/worktrees/repo/t3-1234` : root;
+      yield* fs.makeDirectory(path, { recursive: true });
       yield* fs.writeFileString(`${path}/.git`, "gitdir: /repo/.git/worktrees/task");
       const harness = makeHarness({
+        ...("managed" in scenario ? { t3BaseDir: root } : {}),
         currentBranch: "task/example/001",
         existingBranchWorktreePath: "registry" in scenario ? "/repo/another-worktree" : path,
         thread: {

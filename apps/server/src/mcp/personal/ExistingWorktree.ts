@@ -10,6 +10,7 @@ export const resolveExistingWorktree = Effect.fn("ExistingWorktree.resolve")(fun
   readonly path: string;
   readonly branch: string;
   readonly projectRoots: ReadonlyArray<string>;
+  readonly isManagedWorktreePath: (path: string) => Effect.Effect<boolean>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const git = yield* GitWorkflowService.GitWorkflowService;
@@ -25,6 +26,14 @@ export const resolveExistingWorktree = Effect.fn("ExistingWorktree.resolve")(fun
     .stat(NodePath.join(worktreePath, ".git"))
     .pipe(Effect.mapError(invalid));
   if (gitEntry.type !== "File") return yield* invalid();
+  // T3's own handoff checkouts (`t3/` branches) are not task or ticket worktrees.
+  if (yield* input.isManagedWorktreePath(worktreePath)) {
+    return yield* new WorktreeMcpFailure({
+      code: "invalid_request",
+      message:
+        "This is a T3-managed checkout, not a task or ticket worktree. Attach only the worktree the task or ticket skill created under its worktrees root, and record that one instead. The worktree was not changed.",
+    });
+  }
   const status = yield* git.localStatus({ cwd: worktreePath }).pipe(Effect.mapError(invalid));
   if (!status.isRepo || status.refName !== input.branch) return yield* invalid();
 

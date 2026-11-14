@@ -23,14 +23,17 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import type * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 
 import { resolveExistingWorktree } from "./personal/ExistingWorktree.ts";
+import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import type * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
@@ -84,6 +87,7 @@ const make = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+  const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
   // Serialize handoffs per thread to avoid creating two worktrees and orphaning one.
   const handoffThreadsInFlight = new Set<string>();
@@ -425,6 +429,7 @@ const make = Effect.gen(function* () {
         const { worktreePath, branch } = yield* resolveExistingWorktree({
           ...input,
           projectRoots: getProjectWorkspaceRoots(project),
+          isManagedWorktreePath,
         }).pipe(
           Effect.provideService(GitWorkflowService.GitWorkflowService, gitWorkflow),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -582,4 +587,6 @@ export const layer: Layer.Layer<
   | GitWorkflowService.GitWorkflowService
   | ProjectSetupScriptRunner.ProjectSetupScriptRunner
   | VcsStatusBroadcaster.VcsStatusBroadcaster
+  | ServerConfig.ServerConfig
+  | Path.Path
 > = Layer.effect(WorktreeMcpService, make);
