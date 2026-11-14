@@ -46,8 +46,13 @@ export function parseModelMentionHref(href: string): ModelMention | null {
 }
 
 // Markdown carries delegation IDs through existing drafts and provider prompts unchanged.
+// Chips render from the href, so only the agent reads the label. Escaped brackets
+// (`\[1m\]`) would parse as TeX display math in the composer and break the chip.
 export function serializeModelMention(model: ModelMention): string {
-  const label = `${model.name} · ${model.providerName}`.replace(/[\\[\]]/g, "\\$&");
+  const label = `${model.name} · ${model.providerName} as subagent`
+    .replace(/\\/g, "")
+    .replace(/\[/g, "(")
+    .replace(/\]/g, ")");
   return `[${label}](${modelMentionHref(model)})`;
 }
 

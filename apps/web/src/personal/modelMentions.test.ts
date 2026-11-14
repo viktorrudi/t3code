@@ -3,6 +3,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { getAppModelOptionsForInstance } from "../modelSelection";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
 import { splitPromptIntoComposerSegments } from "../composer-editor-mentions";
 import {
   modelMentionMatches,
@@ -128,6 +129,8 @@ describe("model mentions", () => {
     const source = serializeModelMention(model);
     expect(parseModelMentionSource(source)).toEqual(model);
     expect(source).toContain("provider=claude-sensoneo&model=org%2Fmodel");
+    expect(source).toMatch(/^\[Model \(5\.5\)  test · Claude Sensoneo as subagent\]\(/);
+    expect(composerMathRanges(`Use ${source} now`)).toEqual([]);
     expect(splitPromptIntoComposerSegments(`Use ${source} with @AGENTS.md and $review `)).toEqual([
       { type: "text", text: "Use " },
       {
