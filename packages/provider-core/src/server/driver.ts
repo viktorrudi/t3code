@@ -10,6 +10,8 @@ import type {
   ProviderInstanceId,
   ServerProvider,
   ServerProviderWorkspaceSnapshot,
+  PatternReaderRequest,
+  PatternReaderError,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -50,6 +52,20 @@ export interface ProviderInstance {
   ) => Effect.Effect<ProviderConsumeResetCreditOutcome, ProviderDriverError>;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
+  /** Deliberately absent from other providers and public RPC/MCP surfaces. */
+  readonly structuredGeneration?: {
+    readonly execute: (
+      request: PatternReaderRequest,
+      outputSchema?: Schema.Codec<unknown>,
+    ) => Effect.Effect<
+      {
+        readonly output_json?: object;
+        readonly usage?: object | null;
+        readonly provider_request_id?: string;
+      },
+      PatternReaderError
+    >;
+  };
   readonly auth?: ProviderAuthController;
   readonly acpSessionManagement?: {
     readonly listSessions: (input: {

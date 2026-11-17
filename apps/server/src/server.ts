@@ -74,6 +74,7 @@ import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts"
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
 import { BUILT_IN_SOURCE_CONTROL_DRIVER_LIST } from "./sourceControl/sourceControlDefinitions.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
+import * as PatternReaderSocket from "./textGeneration/PatternReaderSocket.ts";
 import * as SecretResolver from "./secrets/SecretResolver.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
@@ -1216,6 +1217,7 @@ const layerMakeServer = Layer.unwrap(
       layerTailscaleServe,
       layerCloudDesiredLinkReconcile,
       HeapSnapshot.layer,
+      PatternReaderSocket.layer,
     );
 
     return layerServerApplication.pipe(

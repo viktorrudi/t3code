@@ -12,6 +12,7 @@ import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 import { COMMAND_TIMEOUT_MS } from "./CodexManagedTokenProtocol.ts";
 import { materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
+import * as CodexManagedResponses from "./CodexManagedResponses.ts";
 
 export interface CodexEffectiveRuntime {
   readonly config: CodexSettings;
@@ -134,5 +135,9 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       revision: profileKey,
     } satisfies CodexEffectiveRuntime;
   });
-  return { auth, resolve, installation, homePath, homeLayout };
+  const structuredGeneration = yield* CodexManagedResponses.make({
+    instanceId: options.instanceId,
+    auth,
+  });
+  return { auth, resolve, installation, homePath, homeLayout, structuredGeneration };
 });
