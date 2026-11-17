@@ -40,7 +40,8 @@ const WorktreeAttachTool = Tool.make("t3_worktree_attach", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
   description:

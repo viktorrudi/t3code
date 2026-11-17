@@ -1952,7 +1952,7 @@ export default function FilePreviewPanel(props: FilePreviewPanelProps) {
         value={selectedRoot}
         onChange={(root) => setChoice({ root, path: props.relativePath })}
       />
-      <div className="min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col">
         <WorkspaceFilePreviewPanel
           {...props}
           cwd={selectedRoot}
