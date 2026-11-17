@@ -100,6 +100,7 @@ const layerWithPolicy = (policy?: ManagedPolicySummary) =>
             additionalWorkspaceRoots: ["/admin", "/docs"],
             defaultModelSelection: null,
             defaultThreadEnvMode: null,
+            hasCustomTitle: false,
             autoPull: false,
             faviconPath: null,
             projectIcon: null,
