@@ -491,6 +491,10 @@
       "types": "./src/markdownWindowsPaths.ts",
       "import": "./src/markdownWindowsPaths.ts"
     },
+    "./markdownSpacedPathLinks": {
+      "types": "./src/markdownSpacedPathLinks.ts",
+      "import": "./src/markdownSpacedPathLinks.ts"
+    },
     "./generatedImageMarkdown": {
       "types": "./src/generatedImageMarkdown.ts",
       "import": "./src/generatedImageMarkdown.ts"
