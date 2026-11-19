@@ -33,11 +33,15 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
-it("groups a thread on drop, puts it above ungrouped threads, and stores the group", async () => {
+it("groups threads on drop and keeps their status visible in compact rows", async () => {
   await page.viewport(1400, 900);
   const [first, second, ungrouped] = [
-    threadWithHistory("group-source", 1),
-    threadWithHistory("group-target", 1),
+    {
+      ...threadWithHistory("group-source", 1),
+      title: "A working thread with a long title that will need to truncate",
+      shellStatus: "running" as const,
+    },
+    { ...threadWithHistory("group-target", 1), shellStatus: "idle" as const },
     threadWithHistory("ungrouped", 1),
   ];
   using _environment = installFakeEnvironment([first, second, ungrouped]);
@@ -45,6 +49,7 @@ it("groups a thread on drop, puts it above ungrouped threads, and stores the gro
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    sidebarWorkingShelfEnabled: false,
   });
   const router = getRouter(
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${second.id}`] }),
@@ -99,6 +104,15 @@ it("groups a thread on drop, puts it above ungrouped threads, and stores the gro
     document.querySelector('[data-testid="sidebar-thread-group-header"]')!.getBoundingClientRect()
       .top,
   ).toBeLessThan(row(ungrouped.id)!.getBoundingClientRect().top);
+  const groupedStatus = (id: string, label: string) =>
+    page
+      .getByTestId("sidebar-row-slim")
+      .filter({
+        has: page.getByText(new RegExp(`^${label}`)),
+      })
+      .filter({ hasText: id });
+  await expect.element(groupedStatus(first.title, "Working")).toBeVisible();
+  await expect.element(groupedStatus(second.title, "Waiting")).toBeVisible();
   expect(JSON.parse(localStorage.getItem("t3code:sidebar:thread-groups:v1") ?? "[]")).toEqual([
     expect.objectContaining({
       title: second.title,

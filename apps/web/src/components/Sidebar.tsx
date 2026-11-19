@@ -3691,7 +3691,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             : "folder"
                           : isCard
                             ? "card"
-                            : "slim";
+                            : section === "grouped"
+                              ? "grouped"
+                              : "slim";
                         return (
                           <SortableThreadRow
                             key={threadKey}

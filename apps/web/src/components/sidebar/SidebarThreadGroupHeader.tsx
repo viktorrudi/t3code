@@ -84,7 +84,7 @@ export const SidebarThreadGroupHeader = memo(function SidebarThreadGroupHeader(p
 }) {
   const { group, onReorderMove, onReorderEnd } = props;
   const favicon = (
-    <span aria-hidden className="flex shrink-0 items-center opacity-40 grayscale">
+    <span aria-hidden className="flex shrink-0 items-center">
       {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
     </span>
   );
