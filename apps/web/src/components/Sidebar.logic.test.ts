@@ -1215,18 +1215,13 @@ describe("Working shelf (beta)", () => {
     });
 
     it("never drops into a thread group's rows, and keeps them out of the inbox order", () => {
-      const grouped = [
-        ...items.slice(0, 5),
-        marker("group:g"),
-        row("g1", "grouped"),
-        ...items.slice(5),
-      ];
+      const grouped = [marker("group:g"), row("g1", "grouped"), ...items];
       expect(resolveSidebarDropTarget(grouped, "a1", "g1")).toBeNull();
       expect(resolveSidebarDropTarget(grouped, "a1", sidebarMarkerId("group:g"))).toBeNull();
       expect(resolveSidebarDropTarget(grouped, "g1", "a1")).toEqual({
         section: "active",
         pinnedOrder: ["p1"],
-        activeOrder: ["g1", "a1", "a2"],
+        activeOrder: ["a1", "g1", "a2"],
       });
       expect(resolveSidebarDropVerb("active", "grouped")).toBeNull();
     });

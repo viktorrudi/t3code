@@ -238,7 +238,8 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
   for (let i = 0; i < index && i < items.length; i += 1) {
     const item = items[i]!;
     if (item.kind !== "marker") continue;
-    if (item.marker === "pinned-divider") section = "active";
+    if (item.marker === "pinned-header") section = "pinned";
+    else if (item.marker === "pinned-divider") section = "active";
     else if (item.marker === "working-header") section = "working";
     else if (item.marker === "snoozed-header") section = "snoozed";
     else if (item.marker === "settled-header") section = "settled";
@@ -263,7 +264,17 @@ export function resolveSidebarDropTarget(
   if (activeIndex === -1 || overIndex === -1 || items[activeIndex]?.kind !== "thread") return null;
   const moved = items.filter((_, index) => index !== activeIndex);
   moved.splice(overIndex, 0, items[activeIndex]!);
-  const section = sectionAtSidebarSlot(moved, overIndex);
+  const over = items[overIndex];
+  if (
+    (over?.kind === "thread" && over.section === "grouped") ||
+    (over?.kind === "marker" && isSidebarGroupMarker(over.marker))
+  ) {
+    return null;
+  }
+  const section =
+    over?.kind === "marker" && over.marker === "pinned-header"
+      ? "pinned"
+      : sectionAtSidebarSlot(moved, overIndex);
   if (section === "working" || section === "snoozed" || section === "grouped") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
@@ -274,11 +285,11 @@ export function resolveSidebarDropTarget(
       else if (
         item.marker === "working-header" ||
         item.marker === "snoozed-header" ||
-        item.marker === "settled-header" ||
-        isSidebarGroupMarker(item.marker)
+        item.marker === "settled-header"
       )
         break;
-    } else if (currentSection === "pinned") pinnedOrder.push(item.key);
+    } else if (item.section === "grouped" && item.key !== activeKey) continue;
+    else if (currentSection === "pinned") pinnedOrder.push(item.key);
     else activeOrder.push(item.key);
   }
   return { section, pinnedOrder, activeOrder };

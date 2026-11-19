@@ -19,7 +19,6 @@ import {
   useSensor,
   useSensors,
   type AutoScrollOptions,
-  type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
@@ -281,7 +280,7 @@ import {
   arrangeSidebarThreadGroups,
   dropThreadIntoGroup,
   expandGroups,
-  findGroupDropCandidate,
+  findGroupDropTarget,
   moveGroup,
   observeGroupMemberCompletions,
   releaseGroup,
@@ -354,9 +353,6 @@ const sidebarProviderEntriesAtom = Atom.make((get) => {
 
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, SidebarProviderEntry> = new Map();
 const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
-const NO_THREAD_GROUPS: SidebarThreadGroups = [];
-// Resting a dragged row on another this long groups them; passing over keeps sorting.
-const GROUP_DROP_DWELL_MS = 350;
 
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
@@ -471,8 +467,6 @@ function useSidebarThreads(input: {
     folderGroups,
     keepEmptyFolders: keepEmpty,
   } = input;
-  // Boring mode lists threads by project folder, so it leaves thread groups out.
-  const storedThreadGroups = folderGroups === null ? input.threadGroups : NO_THREAD_GROUPS;
   // Folders already separate the work, so boring mode has no Working shelf.
   const workingShelfEnabled =
     useClientSettings((s) => s.sidebarWorkingShelfEnabled) && folderGroups === null;
@@ -523,7 +517,7 @@ function useSidebarThreads(input: {
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
 
-  const arrangedGroups = arrangeSidebarThreadGroups(storedThreadGroups, partition.visibleThreads);
+  const arrangedGroups = arrangeSidebarThreadGroups(input.threadGroups, partition.visibleThreads);
   const groupIdByThreadKey = new Map(
     arrangedGroups.flatMap(({ group, members }) =>
       members.map((thread) => [threadShellKey(thread), group.id] as const),
@@ -609,11 +603,11 @@ function useSidebarThreads(input: {
           };
         });
   const orderedThreads = [
+    ...threadGroups.flatMap((group) => group.renderedMembers),
     ...pinnedThreads,
     ...(projectFolders === null
       ? activeThreads
       : projectFolders.flatMap((folder) => folder.threads)),
-    ...threadGroups.flatMap((group) => group.renderedMembers),
     ...visibleWorkingThreads,
     ...visibleSnoozedThreads,
     ...renderedSettledThreads,
@@ -1181,21 +1175,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
   const threads = useQuietThreadShells();
   const storedThreadGroups = useSidebarThreadGroups();
-  // A dragged row resting on a row or group header, armed after a short dwell.
   const [groupDrop, setGroupDrop] = useState<SidebarGroupDropTarget | null>(null);
-  const groupDropRef = useRef<{
-    candidate: SidebarGroupDropTarget | null;
-    timer: ReturnType<typeof setTimeout> | undefined;
-  }>({ candidate: null, timer: undefined });
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
   const [groupReorder, setGroupReorder] = useState<{
     readonly id: string;
     readonly toIndex: number;
   } | null>(null);
-  const groupCompletionsRef = useRef<{ since: number | null; seen: Map<string, number | null> }>({
-    since: null,
-    seen: new Map(),
-  });
+  const groupCompletionsRef = useRef(new Map<string, number | null>());
   const promotingDraftThreadKeys = usePromotingDraftThreadKeys();
   const listedThreads =
     promotingDraftThreadKeys.length === 0
@@ -1824,7 +1810,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     };
   };
 
-  // Folder rows only drag out to the composer; folders own their order, so nothing drops in the list.
+  // Folder and Working rows support grouping and composer drags. Their section owns their order.
   const isContextDrag =
     projectFolders !== null ||
     dragState?.contextDrag === true ||
@@ -1837,8 +1823,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     contextDragKeyRef.current = null;
     dragScrollRef.current = null;
     endThreadContextDrag();
-    clearTimeout(groupDropRef.current.timer);
-    groupDropRef.current.timer = undefined;
     if (started) {
       listMotionRef.current?.release();
       setDragState(null);
@@ -1871,6 +1855,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const scroll = dragScrollRef.current;
     if (scroll && scroll.viewport.scrollTop !== scroll.top) scroll.viewport.scrollTop = scroll.top;
   };
+  const groupDropAtPointer = (point: { x: number; y: number }) => {
+    const list = threadListRef.current;
+    const sourceKey = contextDragKeyRef.current;
+    if (list === null || sourceKey === null || pointerOutsideThreadList(point)) return null;
+    return findGroupDropTarget(list, point, sourceKey, groupIdByThreadKey);
+  };
   const moveThreadContextDrag = (point: { x: number; y: number }) => {
     // Search results cannot reorder, so their context preview starts inside the list.
     const contextDrag = searchResultsListRef.current !== null || pointerOutsideThreadList(point);
@@ -1879,6 +1869,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         ? current
         : { ...current, contextDrag },
     );
+    const target = contextDrag ? null : groupDropAtPointer(point);
+    setGroupDrop((current) => (sameGroupDropTarget(current, target) ? current : target));
     if (!contextDrag) {
       endThreadContextDrag();
       return false;
@@ -1891,7 +1883,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return true;
   };
   const dropThreadContextDrag = (point: { x: number; y: number }) => {
-    if (!pointerOutsideThreadList(point)) return false;
+    if (!pointerOutsideThreadList(point)) {
+      const target = groupDropAtPointer(point);
+      const sourceKey = contextDragKeyRef.current;
+      if (target === null || sourceKey === null) return false;
+      dropIntoThreadGroup(sourceKey, target);
+      return true;
+    }
     restoreDragScroll();
     dropThreadContext(point, contextDragThreads());
     return true;
@@ -2015,7 +2013,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const handleThreadDragStart = (event: DragStartEvent) => {
     const activeKey = String(event.active.id);
     contextDragKeyRef.current = activeKey;
-    groupDropRef.current.candidate = null;
     const activeSection = sectionByThreadKey.get(activeKey);
     if (activeSection === undefined) return;
     listMotionRef.current?.suspend();
@@ -2023,7 +2020,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const viewport = list?.closest('[data-slot="scroll-area-viewport"]');
     dragScrollRef.current = viewport ? { viewport, top: viewport.scrollTop } : null;
     const header = list?.querySelector<HTMLElement>('[data-testid="sidebar-pinned-header"]');
-    if (list && header) {
+    if (list && header && threadGroups.length === 0) {
       const listRect = list.getBoundingClientRect();
       const scale = list.offsetWidth > 0 ? listRect.width / list.offsetWidth : 1;
       dragLabelOffsetRef.current =
@@ -2064,17 +2061,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     ) {
       return [];
     }
-    const items: SidebarListItem[] = [{ kind: "marker", marker: "pinned-header" }];
+    const items: SidebarListItem[] = [];
+    for (const { group, renderedMembers } of threadGroups) {
+      items.push({ kind: "marker", marker: `group:${group.id}` });
+      items.push(...rowsOf(renderedMembers, "grouped"));
+    }
+    items.push({ kind: "marker", marker: "pinned-header" });
     const pinnedRows = rowsOf(pinnedThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
     const activeRows = rowsOf(activeThreads, "active");
     items.push({ kind: "marker", marker: "active-placeholder" });
     items.push(...activeRows);
-    for (const { group, renderedMembers } of threadGroups) {
-      items.push({ kind: "marker", marker: `group:${group.id}` });
-      items.push(...rowsOf(renderedMembers, "grouped"));
-    }
     if (workingThreads.length > 0) {
       items.push({ kind: "marker", marker: "working-header" });
       items.push(...rowsOf(visibleWorkingThreads, "working"));
@@ -2175,20 +2173,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
   const dragActivationY = dragState?.activationY;
-  // Collision detection runs inside dnd-kit's render, so the dwell timer starts here.
-  const trackGroupDropCandidate = useStableCallback(
-    (candidate: SidebarGroupDropTarget | null, armed: boolean) => {
-      const tracker = groupDropRef.current;
-      if (sameGroupDropTarget(candidate, tracker.candidate)) return;
-      tracker.candidate = candidate;
-      clearTimeout(tracker.timer);
-      tracker.timer =
-        candidate === null
-          ? undefined
-          : setTimeout(() => setGroupDrop(candidate), GROUP_DROP_DWELL_MS);
-      if (armed) setTimeout(() => setGroupDrop(null), 0);
-    },
-  );
   const dndCollisionDetection = (() => {
     if (draggedThreadKey === undefined || draggedFromSection === undefined)
       return createSidebarCollisionDetection(() => true);
@@ -2198,19 +2182,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       draggedFromSection === "grouped"
         ? (naturalSectionByThreadKey.get(draggedThreadKey) ?? "active")
         : draggedFromSection;
-    // Rests are timed outside render; arming re-renders, which reruns collisions with rows held still.
-    const combine = (args: Parameters<CollisionDetection>[0]) => {
-      if (isContextDrag) return false;
-      const candidate = findGroupDropCandidate({
-        collisionRect: args.collisionRect,
-        droppableRects: args.droppableRects,
-        items: sidebarListItems,
-        activeKey: draggedThreadKey,
-        groupIdByThreadKey,
-      });
-      trackGroupDropCandidate(candidate, groupDrop !== null);
-      return groupDrop !== null && sameGroupDropTarget(candidate, groupDrop);
-    };
     return createSidebarCollisionDetection(
       (id) => {
         const target = resolveSidebarDropTarget(sidebarListItems, draggedThreadKey, id);
@@ -2238,7 +2209,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       {
         items: sidebarListItems,
         activationY: dragActivationY ?? null,
-        combine,
+        combine: () => groupDrop !== null || isContextDrag,
       },
     );
   })();
@@ -2253,24 +2224,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (group === undefined || group.titleEdited) return;
     void generateSidebarThreadGroupTitle(groupId, groupMemberShells(group.members));
   };
-  const dropIntoThreadGroup = (sourceKey: string, target: SidebarGroupDropTarget) => {
+  function dropIntoThreadGroup(sourceKey: string, target: SidebarGroupDropTarget) {
     const targetTitle =
       target.kind === "thread" ? groupMemberShells([target.key])[0]?.title.trim() : undefined;
     const newGroup = { id: randomUUID(), title: targetTitle || "Group" };
-    const result = dropThreadIntoGroup(storedThreadGroups, sourceKey, target, newGroup);
-    if (result === null) return;
-    // The landing group opens so the dropped row stays in view.
-    const next = updateGroup(result.groups, result.groupId, { collapsed: false });
-    updateSidebarThreadGroups(() => next);
-    retitleThreadGroup(next, result.groupId);
-  };
+    updateSidebarThreadGroups((groups) => {
+      const result = dropThreadIntoGroup(groups, sourceKey, target, newGroup);
+      if (result === null) return groups;
+      const next = updateGroup(result.groups, result.groupId, { collapsed: false });
+      retitleThreadGroup(next, result.groupId);
+      return next;
+    });
+  }
   const handleThreadDragEnd = (event: DragEndEvent) => {
     if (projectFolders !== null) return;
     const activeKey = String(event.active.id);
-    if (groupDrop !== null && sameGroupDropTarget(groupDropRef.current.candidate, groupDrop)) {
-      dropIntoThreadGroup(activeKey, groupDrop);
-      return;
-    }
     const activeSection = sectionByThreadKey.get(activeKey);
     const target =
       event.over === null
@@ -2440,7 +2408,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const api = readLocalApi();
       const arranged = threadGroups.find((candidate) => candidate.group.id === groupId);
       if (!api || arranged === undefined) return;
-      const settling = arranged.members.filter(
+      const settling = groupMemberShells(arranged.group.members).filter(
         (thread) => serverConfigs.has(thread.environmentId) && thread.settledOverride !== "settled",
       );
       void (async () => {
@@ -2459,7 +2427,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 separatorBefore: true,
                 disabled: settling.length === 0 || !canOperateThreads(settling),
               },
-              { id: "release", label: "Ungroup" },
+              { id: "release", label: "Release all threads" },
             ],
             position,
             source,
@@ -2484,10 +2452,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             for (const thread of settling) {
               attemptSettle(scopeThreadRef(thread.environmentId, thread.id), { coSettlingKeys });
             }
-            // Settled work is put away, as the Settled shelf keeps it.
-            updateSidebarThreadGroups((groups) =>
-              updateGroup(groups, groupId, { collapsed: true }),
-            );
             return;
           }
           case "release":
@@ -2525,33 +2489,29 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       moveGroup(groups, groupReorder.id, listedIds, groupReorder.toIndex),
     );
   });
-  // Completions are compared with what this client saw before, so a load or reconnect
-  // that reports earlier work does not open groups.
-  const groupMemberProgress = threadGroups.flatMap(({ group, members }) =>
-    members.map((thread) => ({
-      groupId: group.id,
-      key: threadShellKey(thread),
-      completedAt: thread.latestRun?.completedAt ?? null,
-      working: isThreadWorking(thread),
-    })),
+  const groupMembership = new Map(
+    storedThreadGroups.flatMap(({ id, members }) => members.map((key) => [key, id] as const)),
   );
+  const groupMemberProgress =
+    groupMembership.size === 0
+      ? []
+      : threads.flatMap((thread) => {
+          const key = threadShellKey(thread);
+          return groupMembership.has(key)
+            ? [{ key, completedAt: thread.latestRun?.completedAt ?? null }]
+            : [];
+        });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens a group in persisted sidebar state when a member's run completes
   useEffect(() => {
-    const tracker = groupCompletionsRef.current;
-    if (tracker.since === null) tracker.since = Date.now();
-    const finished = new Set(
-      observeGroupMemberCompletions({
-        seen: tracker.seen,
-        members: groupMemberProgress,
-        since: tracker.since,
-      }),
-    );
-    if (finished.size === 0) return;
-    const groupIds = new Set(
-      groupMemberProgress.flatMap((member) => (finished.has(member.key) ? [member.groupId] : [])),
-    );
+    const seen = groupCompletionsRef.current;
+    for (const key of seen.keys()) {
+      if (!groupMembership.has(key)) seen.delete(key);
+    }
+    const finished = observeGroupMemberCompletions(seen, groupMemberProgress);
+    if (finished.length === 0) return;
+    const groupIds = new Set(finished.flatMap((key) => groupMembership.get(key) ?? []));
     updateSidebarThreadGroups((groups) => expandGroups(groups, groupIds));
-  }, [groupMemberProgress]);
+  }, [groupMembership, groupMemberProgress]);
   const performSnooze = async (
     threadRef: ScopedThreadRef,
     preset: import("@t3tools/contracts").ThreadSnoozeChoice,
@@ -3736,7 +3696,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           <SortableThreadRow
                             key={threadKey}
                             sortableId={threadKey}
-                            contextDrag={isContextDrag}
+                            contextDrag={isContextDrag && groupDrop === null}
                             sortableDisabled={
                               renamingThreadKey === threadKey ||
                               !draggableThreadKeys.has(threadKey) ||
@@ -3873,9 +3833,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           insertionBefore === null &&
                           !insertionShown &&
                           item.kind === "marker" &&
-                          (item.marker === "working-header" ||
-                            item.marker === "snoozed-header" ||
-                            item.marker === "settled-header")
+                          item.marker === "pinned-header"
                         ) {
                           insertionShown = true;
                           items.push(<SidebarThreadGroupInsertionLine key="group-insertion" />);
@@ -3900,8 +3858,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                       `${project.environmentId}:${project.projectId}`,
                                     ) ?? null)
                               }
-                              className={cn(groupIndex === 0 && "mt-auto")}
-                              dragging={from !== null}
+                              dragging={dragState !== null}
                               isDropTarget={
                                 groupDrop?.kind === "group" && groupDrop.id === group.id
                               }
@@ -3994,7 +3951,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               <SidebarSectionHeader
                                 key="working-shelf-header"
                                 marker="working-header"
-                                className={cn(threadGroups.length === 0 && "mt-auto")}
+                                className="mt-auto"
                                 label="Working"
                                 count={workingThreads.length}
                                 toggle={{
@@ -4009,9 +3966,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               <SidebarSectionHeader
                                 key="snoozed-shelf-header"
                                 marker="snoozed-header"
-                                className={cn(
-                                  threadGroups.length + workingThreads.length === 0 && "mt-auto",
-                                )}
+                                className={cn(workingThreads.length === 0 && "mt-auto")}
                                 label="Snoozed"
                                 count={snoozedThreads.length}
                                 toggle={{
@@ -4027,10 +3982,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 key="settled-shelf-header"
                                 marker="settled-header"
                                 className={cn(
-                                  threadGroups.length +
-                                    workingThreads.length +
-                                    snoozedThreads.length ===
-                                    0 && "mt-auto",
+                                  workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
                                 )}
                                 label="Settled"
                                 count={settledCount}

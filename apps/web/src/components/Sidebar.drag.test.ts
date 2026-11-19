@@ -530,31 +530,27 @@ describe("sidebar drag projection", () => {
     expect(byTime.get("w")).toEqual(stationary);
   });
 
-  it("keeps thread groups between Active and the shelves, and lets a grouped row leave", () => {
+  it("keeps groups at the top and lets a grouped row leave", () => {
+    const group = marker("group:g");
+    const groupHeader = sidebarMarkerId("group:g");
     const items = [
+      group,
+      thread("g1", "grouped"),
+      thread("g2", "grouped"),
       pinnedHeader,
       divider,
       thread("a1", "active"),
-      marker("group:g"),
-      thread("g1", "grouped"),
-      thread("g2", "grouped"),
       settledHeader,
       thread("s", "settled"),
     ];
     const input = { items, settledOrder: ["a1", "s"], settledExpanded: true };
     const settling = preview(input, "a1", sidebarMarkerId("settled-header"));
-    const header = settling.get(sidebarMarkerId("group:g"));
-    expect(header?.y).toBeLessThan(0);
-    expect(settling.get("g1")).toEqual(header);
-    expect(settling.get("g2")).toEqual(header);
+    for (const key of [groupHeader, "g1", "g2"]) expect(settling.get(key)).toEqual(stationary);
 
     const leaving = preview({ ...input, settledOrder: ["s"] }, "g1", "a1");
-    expect(leaving.get("a1")?.y).toBeGreaterThan(0);
-    expect(leaving.get(sidebarMarkerId("group:g"))?.y).toBeGreaterThan(0);
-    // g1 was above g2, so g2 closes the gap below the header.
-    expect(leaving.get("g2")!.y).toBeLessThan(leaving.get(sidebarMarkerId("group:g"))!.y);
+    expect(leaving.get(groupHeader)).toEqual(stationary);
+    expect(leaving.get("g2")!.y).toBeLessThan(0);
 
-    // Hovering the group region itself keeps every row in place.
     for (const transform of preview(input, "a1", "g2").values()) {
       expect(transform).toEqual(stationary);
     }

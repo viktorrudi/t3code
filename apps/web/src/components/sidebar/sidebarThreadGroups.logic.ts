@@ -4,8 +4,6 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { isSidebarGroupMarker, sidebarListItemId, type SidebarListItem } from "../Sidebar.logic";
-
 /**
  * A sidebar thread group. Groups are this client's arrangement, like folder and shelf
  * expansion; members are scoped thread keys, so one group can span environments.
@@ -191,11 +189,8 @@ function sortGroupMembers<T extends GroupMemberShell>(members: readonly T[]): T[
 function resolveGroupProject(
   sortedMembers: ReadonlyArray<Pick<EnvironmentThreadShell, "environmentId" | "projectId">>,
 ): { readonly environmentId: EnvironmentId; readonly projectId: ProjectId } | null {
-  const counts = new Map<
-    string,
-    { count: number; environmentId: EnvironmentId; projectId: ProjectId }
-  >();
-  let best: { count: number; environmentId: EnvironmentId; projectId: ProjectId } | null = null;
+  type ProjectCount = { count: number; environmentId: EnvironmentId; projectId: ProjectId };
+  const counts = new Map<string, ProjectCount>();
   for (const member of sortedMembers) {
     const key = `${member.environmentId}:${member.projectId}`;
     const entry = counts.get(key) ?? {
@@ -205,9 +200,14 @@ function resolveGroupProject(
     };
     entry.count += 1;
     counts.set(key, entry);
-    if (best === null || entry.count > best.count) best = entry;
   }
-  return best === null ? null : { environmentId: best.environmentId, projectId: best.projectId };
+  let best: ProjectCount | undefined;
+  for (const entry of counts.values()) {
+    if (best === undefined || entry.count > best.count) best = entry;
+  }
+  return best === undefined
+    ? null
+    : { environmentId: best.environmentId, projectId: best.projectId };
 }
 
 export interface ArrangedSidebarThreadGroup<T> {
@@ -239,77 +239,54 @@ export function groupTitleRequest(members: ReadonlyArray<GroupMemberShell>) {
   const sorted = sortGroupMembers(members);
   const project = resolveGroupProject(sorted);
   const threadTitles = [
-    ...new Set(sorted.map((thread) => thread.title.trim()).filter((title) => title.length > 0)),
+    ...new Set(sorted.map((thread) => thread.title.trim().slice(0, 500).trimEnd()).filter(Boolean)),
   ].slice(0, 50);
   if (project === null || threadTitles.length === 0) return null;
   return { environmentId: project.environmentId, projectId: project.projectId, threadTitles };
 }
 
-/**
- * Reports members whose run completed since the last observation. Completions before
- * `since` (work that finished before this client looked) and members seen for the first
- * time never count, so loading or reconnecting does not open groups.
- */
-export function observeGroupMemberCompletions(input: {
-  readonly seen: Map<string, number | null>;
-  readonly members: ReadonlyArray<{
-    readonly key: string;
-    readonly completedAt: string | null | undefined;
-    readonly working: boolean;
-  }>;
-  readonly since: number;
-}): string[] {
+/** First observation establishes a baseline, including when a previously unloaded member appears. */
+export function observeGroupMemberCompletions(
+  seen: Map<string, number | null>,
+  members: ReadonlyArray<{ readonly key: string; readonly completedAt: string | null }>,
+): string[] {
   const finished: string[] = [];
-  for (const member of input.members) {
-    const parsed = member.completedAt == null ? Number.NaN : Date.parse(member.completedAt);
-    const completedMs = Number.isFinite(parsed) ? parsed : null;
-    const known = input.seen.has(member.key);
-    const previous = input.seen.get(member.key) ?? null;
-    input.seen.set(member.key, completedMs);
-    if (
-      known &&
-      !member.working &&
-      completedMs !== null &&
-      completedMs > input.since &&
-      (previous === null || completedMs > previous)
-    ) {
-      finished.push(member.key);
+  for (const { key, completedAt } of members) {
+    const previous = seen.get(key);
+    const timestamp = Date.parse(completedAt ?? "");
+    if (!Number.isFinite(timestamp)) {
+      if (previous === undefined) seen.set(key, null);
+    } else if (previous == null || timestamp > previous) {
+      seen.set(key, timestamp);
+      if (previous !== undefined) finished.push(key);
     }
   }
   return finished;
 }
 
-type Rect = { readonly top: number; readonly height: number };
-
-/**
- * The row or group header the dragged row rests on. Rows count only through their
- * middle half, so their edges still reorder; a header counts across its height.
- */
-export function findGroupDropCandidate(input: {
-  readonly collisionRect: Rect;
-  readonly droppableRects: ReadonlyMap<string | number, Rect>;
-  readonly items: readonly SidebarListItem[];
-  readonly activeKey: string;
-  readonly groupIdByThreadKey: ReadonlyMap<string, string>;
-}): SidebarGroupDropTarget | null {
-  const centerY = input.collisionRect.top + input.collisionRect.height / 2;
-  const sourceGroup = input.groupIdByThreadKey.get(input.activeKey);
-  for (const item of input.items) {
-    const id = sidebarListItemId(item);
-    if (id === input.activeKey) continue;
-    const rect = input.droppableRects.get(id);
-    if (rect === undefined || rect.height === 0) continue;
-    if (item.kind === "thread") {
-      if (Math.abs(centerY - (rect.top + rect.height / 2)) > rect.height / 4) continue;
-      const targetGroup = input.groupIdByThreadKey.get(item.key);
-      return sourceGroup !== undefined && targetGroup === sourceGroup
+export function findGroupDropTarget(
+  list: HTMLElement,
+  point: { readonly x: number; readonly y: number },
+  sourceKey: string,
+  groupIdByThreadKey: ReadonlyMap<string, string>,
+): SidebarGroupDropTarget | null {
+  const sourceGroup = groupIdByThreadKey.get(sourceKey);
+  for (const element of list.ownerDocument.elementsFromPoint(point.x, point.y)) {
+    const row = element.closest<HTMLElement>("[data-thread-item], [data-sidebar-thread-group]");
+    if (row === null || !list.contains(row)) continue;
+    const key = row.dataset.threadItem;
+    if (key === sourceKey) continue;
+    if (key !== undefined) {
+      const { top, height } = row.getBoundingClientRect();
+      const targetGroup = groupIdByThreadKey.get(key);
+      return Math.abs(point.y - (top + height / 2)) > height / 4 ||
+        (sourceGroup !== undefined && targetGroup === sourceGroup)
         ? null
-        : { kind: "thread", key: item.key };
+        : { kind: "thread", key };
     }
-    if (!isSidebarGroupMarker(item.marker)) continue;
-    if (centerY < rect.top || centerY > rect.top + rect.height) continue;
-    const groupId = item.marker.slice("group:".length);
-    return groupId === sourceGroup ? null : { kind: "group", id: groupId };
+    const groupId = row.dataset.sidebarThreadGroup;
+    if (groupId !== undefined && groupId !== sourceGroup) return { kind: "group", id: groupId };
+    return null;
   }
   return null;
 }

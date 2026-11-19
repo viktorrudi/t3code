@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 
-import { sidebarMarkerId, type SidebarListItem } from "../Sidebar.logic";
 import {
   arrangeSidebarThreadGroups,
   dropThreadIntoGroup,
-  findGroupDropCandidate,
   groupTitleRequest,
   moveGroup,
   observeGroupMemberCompletions,
@@ -157,79 +155,28 @@ describe("sidebar thread group arrangement", () => {
 });
 
 describe("sidebar thread group completions", () => {
-  const since = Date.parse("2026-01-01T12:00:00.000Z");
-
-  it("opens only for runs this client saw finish, not for work loaded or reconnected", () => {
+  it("opens for newer completions after the first observation", () => {
     const seen = new Map<string, number | null>();
-    const observe = (
-      members: Array<{ key: string; completedAt: string | null; working: boolean }>,
-    ) => observeGroupMemberCompletions({ seen, members, since });
-
-    // First sight, even of a run that finished after this client started, never counts.
+    const observe = (members: Array<{ key: string; completedAt: string | null }>) =>
+      observeGroupMemberCompletions(seen, members);
     expect(
       observe([
-        { key: "e:old", completedAt: "2026-01-01T11:00:00.000Z", working: false },
-        { key: "e:late", completedAt: "2026-01-01T12:05:00.000Z", working: false },
-        { key: "e:run", completedAt: null, working: true },
-      ]),
-    ).toEqual([]);
-    // A stale snapshot replaced by one holding an earlier completion does not count either.
-    expect(
-      observe([
-        { key: "e:old", completedAt: "2026-01-01T11:30:00.000Z", working: false },
-        { key: "e:late", completedAt: "2026-01-01T12:05:00.000Z", working: false },
-        { key: "e:run", completedAt: null, working: true },
+        { key: "e:idle", completedAt: "2026-01-01T12:00:00.000Z" },
+        { key: "e:running", completedAt: null },
       ]),
     ).toEqual([]);
     expect(
       observe([
-        { key: "e:old", completedAt: "2026-01-01T11:30:00.000Z", working: false },
-        { key: "e:late", completedAt: "2026-01-01T12:05:00.000Z", working: false },
-        { key: "e:run", completedAt: "2026-01-01T12:10:00.000Z", working: false },
+        { key: "e:idle", completedAt: null },
+        { key: "e:running", completedAt: "2026-01-01T12:05:00.000Z" },
       ]),
-    ).toEqual(["e:run"]);
-  });
-});
-
-describe("sidebar group drop candidates", () => {
-  const items: SidebarListItem[] = [
-    { kind: "thread", key: "source", section: "active" },
-    { kind: "thread", key: "target", section: "active" },
-    { kind: "marker", marker: "group:g" },
-    { kind: "thread", key: "member", section: "grouped" },
-  ];
-  const droppableRects = new Map<string, { top: number; height: number }>([
-    ["source", { top: 0, height: 80 }],
-    ["target", { top: 100, height: 80 }],
-    [sidebarMarkerId("group:g"), { top: 200, height: 32 }],
-    ["member", { top: 240, height: 36 }],
-  ]);
-  const candidateAt = (centerY: number, groupIdByThreadKey = new Map([["member", "g"]])) =>
-    findGroupDropCandidate({
-      collisionRect: { top: centerY - 40, height: 80 },
-      droppableRects,
-      items,
-      activeKey: "source",
-      groupIdByThreadKey,
-    });
-
-  it("groups through a row's middle half and leaves its edges to reordering", () => {
-    expect(candidateAt(140)).toEqual({ kind: "thread", key: "target" });
-    expect(candidateAt(105)).toBeNull();
-    expect(candidateAt(175)).toBeNull();
-  });
-
-  it("takes a group header across its height", () => {
-    expect(candidateAt(201)).toEqual({ kind: "group", id: "g" });
-    expect(candidateAt(258)).toEqual({ kind: "thread", key: "member" });
-  });
-
-  it("ignores the dragged row's own group", () => {
-    const own = new Map([
-      ["member", "g"],
-      ["source", "g"],
-    ]);
-    expect(candidateAt(216, own)).toBeNull();
-    expect(candidateAt(258, own)).toBeNull();
+    ).toEqual(["e:running"]);
+    expect(
+      observe([
+        { key: "e:idle", completedAt: "2026-01-01T12:00:00.000Z" },
+        { key: "e:running", completedAt: "2026-01-01T12:05:00.000Z" },
+        { key: "e:loaded", completedAt: "2026-01-01T12:05:00.000Z" },
+      ]),
+    ).toEqual([]);
   });
 });
