@@ -23,6 +23,7 @@ import {
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
+  sidebarMarkerId,
   planSidebarThreadDrop,
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
@@ -1211,6 +1212,23 @@ describe("Working shelf (beta)", () => {
         activeOrder: ["a1", "a2", "p1"],
       });
       expect(resolveSidebarDropVerb("active", "working")).toBeNull();
+    });
+
+    it("never drops into a thread group's rows, and keeps them out of the inbox order", () => {
+      const grouped = [
+        ...items.slice(0, 5),
+        marker("group:g"),
+        row("g1", "grouped"),
+        ...items.slice(5),
+      ];
+      expect(resolveSidebarDropTarget(grouped, "a1", "g1")).toBeNull();
+      expect(resolveSidebarDropTarget(grouped, "a1", sidebarMarkerId("group:g"))).toBeNull();
+      expect(resolveSidebarDropTarget(grouped, "g1", "a1")).toEqual({
+        section: "active",
+        pinnedOrder: ["p1"],
+        activeOrder: ["g1", "a1", "a2"],
+      });
+      expect(resolveSidebarDropVerb("active", "grouped")).toBeNull();
     });
 
     it.each([

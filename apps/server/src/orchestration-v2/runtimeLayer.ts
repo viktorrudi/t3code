@@ -11,6 +11,7 @@ import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as McpAppRequests from "../mcpApps/McpAppRequests.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as ThreadGroupTitles from "./personal/ThreadGroupTitles.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as AgentSessionImporter from "../project/AgentSessionImporter.ts";
@@ -332,6 +333,14 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
     ),
   ),
 );
+const layerThreadGroupTitlesProvided = ThreadGroupTitles.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ProjectStore.layer,
+      TextGeneration.layer.pipe(Layer.provide(ProviderInstallationGate.layer)),
+    ),
+  ),
+);
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -411,6 +420,7 @@ export const layerProduction = Layer.mergeAll(
   layerProviderContinuationWorkerProvided,
   layerAgentSessionScannerProvided,
   layerAgentSessionImporterProvided,
+  layerThreadGroupTitlesProvided,
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),
 ).pipe(
   Layer.provide(ResourceCleanupService.layer.pipe(Layer.provide(layerScheduledTaskProvided))),

@@ -102,6 +102,11 @@ import {
   AgentSessionScanError,
 } from "./agentSessions.ts";
 import {
+  ThreadGroupTitleError,
+  ThreadGroupTitleInput,
+  ThreadGroupTitleResult,
+} from "./threadGroups.ts";
+import {
   AssetAccessError,
   AssetCreateUrlInput,
   AssetCreateUrlResult,
@@ -432,6 +437,7 @@ export const WS_METHODS = {
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
+  threadGroupsGenerateTitle: "threadGroups.generateTitle",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -1466,6 +1472,12 @@ const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
   ]),
 });
 
+const WsThreadGroupsGenerateTitleRpc = Rpc.make(WS_METHODS.threadGroupsGenerateTitle, {
+  payload: ThreadGroupTitleInput,
+  success: ThreadGroupTitleResult,
+  error: Schema.Union([ThreadGroupTitleError, EnvironmentAuthorizationError]),
+});
+
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -2247,6 +2259,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
+  WsThreadGroupsGenerateTitleRpc,
   WsAssetsCreateUrlRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,

@@ -49,6 +49,7 @@ import {
   CircleDashedIcon,
   CircleDotDashedIcon,
   ClockIcon,
+  CombineIcon,
   MessageSquareTextIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
@@ -542,6 +543,12 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
       Wake
     </>
   ),
+  group: (
+    <>
+      <CombineIcon aria-hidden className="size-3" />
+      Group
+    </>
+  ),
 };
 
 const TOP_STATUS_ICONS = {
@@ -573,6 +580,8 @@ type SidebarThreadRowProps = {
   isPinned: boolean;
   sortable?: SortableThreadRowBag | undefined;
   dropVerb: SidebarDropVerb | null;
+  /** The dragged row rests on this one and would group with it. */
+  isGroupDropTarget?: boolean;
   dragOverPinned: boolean;
   sweepAction: SidebarSweepAction | null;
   snoozeWakeLabelText: string | null;
@@ -1009,6 +1018,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           : shouldRecede
             ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
             : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
+    props.isGroupDropTarget && "ring-1 ring-inset ring-primary/40 bg-primary/5",
     shouldRecede &&
       (status === "preparing" || status === "working") &&
       "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",

@@ -189,7 +189,8 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 
 // Snoozed rows cannot accept drops without a wake time. Working rows only drag out as chat context.
 
-export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
+// Grouped rows sit in sidebar thread groups, outside the sections their state would give them.
+export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled" | "grouped";
 
 export function resolveSidebarThreadSection(input: {
   readonly snoozed: boolean;
@@ -211,7 +212,14 @@ export type SidebarListMarker =
   | "pinned-divider"
   | "working-header"
   | "snoozed-header"
-  | "settled-header";
+  | "settled-header"
+  | SidebarGroupMarker;
+
+export type SidebarGroupMarker = `group:${string}`;
+
+export function isSidebarGroupMarker(marker: SidebarListMarker): marker is SidebarGroupMarker {
+  return marker.startsWith("group:");
+}
 
 export function sidebarMarkerId(marker: SidebarListMarker): string {
   return `${SIDEBAR_MARKER_PREFIX}${marker}`;
@@ -234,6 +242,7 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
     else if (item.marker === "working-header") section = "working";
     else if (item.marker === "snoozed-header") section = "snoozed";
     else if (item.marker === "settled-header") section = "settled";
+    else if (isSidebarGroupMarker(item.marker)) section = "grouped";
   }
   return section;
 }
@@ -255,7 +264,7 @@ export function resolveSidebarDropTarget(
   const moved = items.filter((_, index) => index !== activeIndex);
   moved.splice(overIndex, 0, items[activeIndex]!);
   const section = sectionAtSidebarSlot(moved, overIndex);
-  if (section === "working" || section === "snoozed") return null;
+  if (section === "working" || section === "snoozed" || section === "grouped") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
@@ -265,7 +274,8 @@ export function resolveSidebarDropTarget(
       else if (
         item.marker === "working-header" ||
         item.marker === "snoozed-header" ||
-        item.marker === "settled-header"
+        item.marker === "settled-header" ||
+        isSidebarGroupMarker(item.marker)
       )
         break;
     } else if (currentSection === "pinned") pinnedOrder.push(item.key);
@@ -297,13 +307,14 @@ type SidebarThreadDropPlan =
     }
   | { readonly kind: "settle" };
 
-export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake";
+export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake" | "group";
 
 export function resolveSidebarDropVerb(
   from: SidebarSection,
   to: SidebarSection | null,
 ): SidebarDropVerb | null {
-  if (to === null || to === from || to === "working" || to === "snoozed") return null;
+  if (to === null || to === from || to === "working" || to === "snoozed" || to === "grouped")
+    return null;
   if (to === "pinned") return "pin";
   if (to === "settled") return "settle";
   if (from === "pinned") return "unpin";

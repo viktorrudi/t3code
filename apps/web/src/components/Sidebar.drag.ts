@@ -1,6 +1,7 @@
 import { closestCenter, type CollisionDetection, type Modifier } from "@dnd-kit/core";
 import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
 import {
+  isSidebarGroupMarker,
   resolveSidebarDropTarget,
   sidebarListItemId,
   sidebarMarkerId,
@@ -13,11 +14,13 @@ const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
 const hidden = { ...stationary, scaleY: 0 };
 type ThreadItem = Extract<SidebarListItem, { kind: "thread" }>;
 type Layout = Parameters<SortingStrategy>[0];
+// Group headers open the bottom-anchored block above the shelves.
 const isShelfHeader = (item: SidebarListItem | undefined) =>
   item?.kind === "marker" &&
   (item.marker === "working-header" ||
     item.marker === "snoozed-header" ||
-    item.marker === "settled-header");
+    item.marker === "settled-header" ||
+    isSidebarGroupMarker(item.marker));
 
 export function restrictBelowSidebarLabel(
   { transform, containerNodeRect, draggingNodeRect }: Parameters<Modifier>[0],
@@ -33,6 +36,8 @@ export function createSidebarCollisionDetection(
   options: {
     items?: readonly SidebarListItem[];
     activationY?: number | null;
+    /** True while the dragged row rests on a row or group it would group with; rows hold still. */
+    combine?: (args: Parameters<CollisionDetection>[0]) => boolean;
   } = {},
 ): CollisionDetection {
   const validity = new Map<string, boolean>();
@@ -40,6 +45,9 @@ export function createSidebarCollisionDetection(
   let previousPointerY = options.activationY;
   let boundarySection: "pinned" | "active" | undefined;
   return (args) => {
+    if (options.combine?.(args)) {
+      return closestCenter(args).filter((collision) => collision.id === args.active.id);
+    }
     let collisions = closestCenter(args);
     const pointer = args.pointerCoordinates;
     const items = options.items;
@@ -56,7 +64,13 @@ export function createSidebarCollisionDetection(
       if (pointer.x >= boundary.left && pointer.x <= boundary.right) {
         if (pointer.y < previousY && pointer.y <= boundary.bottom) boundarySection = "pinned";
         else if (pointer.y > previousY && pointer.y >= boundary.top) boundarySection = "active";
-        const nextHeader = (["working-header", "snoozed-header", "settled-header"] as const)
+        const firstGroup = items.find(
+          (item) => item.kind === "marker" && isSidebarGroupMarker(item.marker),
+        );
+        const nextHeader = [
+          ...(firstGroup?.kind === "marker" ? [firstGroup.marker] : []),
+          ...(["working-header", "snoozed-header", "settled-header"] as const),
+        ]
           .map((marker) =>
             args.droppableContainers.find((container) => container.id === sidebarMarkerId(marker)),
           )
@@ -120,6 +134,7 @@ export function createSidebarSortingStrategy(input: {
       working: [],
       snoozed: [],
       settled: [],
+      grouped: [],
     };
     let cardHeight = input.cardHeight;
     let slimHeight = input.slimHeight;
@@ -176,6 +191,14 @@ export function createSidebarSortingStrategy(input: {
     projected.push(...groups.pinned);
     marker("pinned-divider");
     section("active");
+    // Groups keep their own order; the dragged row leaves its group for the target section.
+    for (const item of items) {
+      if (
+        (item.kind === "marker" && isSidebarGroupMarker(item.marker)) ||
+        (item.kind === "thread" && item.section === "grouped" && item.key !== active.key)
+      )
+        projected.push(item);
+    }
     if (items.some((item) => item.kind === "marker" && item.marker === "working-header")) {
       marker("working-header");
       projected.push(...groups.working);
