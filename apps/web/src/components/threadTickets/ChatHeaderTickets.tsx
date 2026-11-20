@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -36,6 +37,7 @@ function JiraTicketStatus({
   environmentId: EnvironmentId;
   ticket: ThreadTicket;
 }) {
+  const gt = useGT();
   const query = useEnvironmentQuery(jiraIssueAtom({ environmentId, input: { key: ticket.key } }));
   const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const [moving, setMoving] = useState(false);
@@ -60,8 +62,8 @@ function JiraTicketStatus({
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: `Could not move ${issue.key}`,
-        description: error instanceof Error ? error.message : "Jira rejected the change.",
+        title: gt("Could not move {key}", { key: issue.key }),
+        description: error instanceof Error ? error.message : gt("Jira rejected the change."),
       });
     }
   };
@@ -70,7 +72,9 @@ function JiraTicketStatus({
     if (query.error === null) return null;
     return (
       <Tooltip>
-        <TooltipTrigger render={<Badge size="sm" variant="warning" />}>Jira?</TooltipTrigger>
+        <TooltipTrigger render={<Badge size="sm" variant="warning" />}>
+          {gt("Jira?")}
+        </TooltipTrigger>
         <TooltipPopup side="bottom">{query.error}</TooltipPopup>
       </Tooltip>
     );
@@ -91,7 +95,7 @@ function JiraTicketStatus({
                 size="xs"
                 variant="ghost"
                 disabled={moving}
-                aria-label={`Change status of ${issue.key}`}
+                aria-label={gt("Change status of {key}", { key: issue.key })}
               />
             }
           >
@@ -127,7 +131,7 @@ function JiraTicketStatus({
               referrerPolicy="no-referrer"
             />
           ) : null}
-          <span className="truncate">{issue.assignee?.displayName ?? "Unassigned"}</span>
+          <span className="truncate">{issue.assignee?.displayName ?? gt("Unassigned")}</span>
         </TooltipTrigger>
         <TooltipPopup side="bottom">
           {issue.issueType ? `${issue.issueType} · ` : ""}

@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useGT, useMessages } from "gt-react";
 import { Fragment } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -26,22 +27,25 @@ function UsageIndicator({
   readonly now: number;
   readonly onClick: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const Icon = track.name === "Codex" ? OpenAI : track.name === "Claude" ? ClaudeAI : CursorIcon;
   const title = `${group} · ${track.name}`;
   const windows = track.windows.map((window) => ({
     ...window,
-    reset: sidebarUsageReset(window.resetsAt, now),
+    reset: sidebarUsageReset(window.resetsAt, now, m),
+    isDue: window.resetsAt !== undefined && Date.parse(window.resetsAt) <= now,
   }));
   const details = windows
     .map((window, index) => {
       const reset =
         track.name === "Cursor" && index > 0
           ? ""
-          : window.reset === "Due"
-            ? "; reset due, waiting for refresh"
+          : window.isDue
+            ? gt("; reset due, waiting for refresh")
             : window.reset === "?"
-              ? "; reset time unavailable"
-              : `; resets in ${window.reset}`;
+              ? gt("; reset time unavailable")
+              : gt("; resets in {time}", { time: window.reset });
       return `${window.label}: ${window.status}${reset}`;
     })
     .join(", ");
@@ -69,13 +73,12 @@ function UsageIndicator({
                 <span
                   className={cn(
                     "font-medium text-sidebar-foreground",
-                    (window.percent === null || window.reset === "Due") &&
-                      "text-sidebar-muted-foreground",
-                    window.reset !== "Due" &&
+                    (window.percent === null || window.isDue) && "text-sidebar-muted-foreground",
+                    !window.isDue &&
                       window.percent !== null &&
                       window.percent <= 20 &&
                       "text-warning",
-                    window.reset !== "Due" && window.percent === 0 && "text-destructive",
+                    !window.isDue && window.percent === 0 && "text-destructive",
                   )}
                 >
                   {window.percent === null ? "?" : `${window.percent}%`}
@@ -95,23 +98,27 @@ function UsageIndicator({
 }
 
 export function SidebarUsageRings({ onClick }: { readonly onClick: () => void }) {
+  const gt = useGT();
+  const m = useMessages();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const minute = useNowMinute();
   const now = Date.parse(`${minute}Z`);
-  const groups = sidebarUsageRings(providers);
+  const groups = sidebarUsageRings(providers, m);
   if (groups.personal.length === 0 && groups.sensoneo.length === 0) return null;
   return (
     <SidebarMenuItem className="min-w-0 basis-full group-data-[collapsible=icon]:hidden">
       <div
         role="group"
-        aria-label="Provider usage remaining"
+        aria-label={gt("Provider usage remaining")}
         className="group/usage grid grid-cols-2 divide-x divide-sidebar-border"
       >
         {(["personal", "sensoneo"] as const).map((group) => (
           <div
             key={group}
             role="group"
-            aria-label={`${group === "personal" ? "Personal" : "Sensoneo"} usage remaining`}
+            aria-label={
+              group === "personal" ? gt("Personal usage remaining") : gt("Sensoneo usage remaining")
+            }
             className="grid min-w-0 auto-rows-fr gap-1 px-1 first:pl-0 last:pr-0"
           >
             {groups[group].map((track) => (

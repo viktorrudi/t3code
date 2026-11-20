@@ -1,9 +1,11 @@
+import { useGT } from "gt-react";
 import { serializeModelMention, type ModelMention } from "./modelMentions";
 import { ContextChip, ContextChipLabel } from "../components/ContextChip";
 import { ProviderInstanceIcon } from "../components/chat/ProviderInstanceIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 
 export function ModelMentionChip({ model }: { model: ModelMention }) {
+  const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -25,7 +27,7 @@ export function ModelMentionChip({ model }: { model: ModelMention }) {
       <TooltipPopup>
         {model.providerName} · {model.model}
         <br />
-        Provider: {model.instanceId}
+        {gt("Provider: {instance}", { instance: model.instanceId })}
       </TooltipPopup>
     </Tooltip>
   );

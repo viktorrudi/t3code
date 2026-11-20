@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { ThreadTicket, ThreadTicketDeploy } from "@t3tools/contracts";
 import type { MouseEvent, PointerEvent } from "react";
 
@@ -55,6 +56,7 @@ export function ThreadTicketChips({
   tickets: ReadonlyArray<ThreadTicket>;
   className?: string;
 }) {
+  const gt = useGT();
   if (tickets.length === 0) return null;
   return (
     <span className={cn("inline-flex min-w-0 shrink-0 items-center gap-1.5", className)}>
@@ -64,7 +66,7 @@ export function ThreadTicketChips({
             href={ticket.url}
             target="_blank"
             rel="noopener noreferrer"
-            aria-label={`Open ${ticket.key} in Jira`}
+            aria-label={gt("Open {key} in Jira", { key: ticket.key })}
             onPointerDown={keepFromRow}
             onClick={keepFromRow}
             className="inline-flex items-center gap-0.5 rounded-sm tabular-nums outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"

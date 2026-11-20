@@ -84,6 +84,25 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect("reconciles the fork's legacy migration 97 without losing attached folders", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 96 });
+      yield* sql`ALTER TABLE projection_projects ADD COLUMN additional_workspace_roots_json TEXT NOT NULL DEFAULT '[]'`;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (97, 'ProjectAttachedFolders')`;
+      const before = yield* sql`PRAGMA table_info(projection_projects)`;
+
+      assert.deepStrictEqual(
+        yield* runMigrations(),
+        migrationManifest.filter(([id]) => id >= 97),
+      );
+      assert.deepStrictEqual(yield* history, migrationManifest);
+      assert.deepStrictEqual(yield* sql`PRAGMA table_info(projection_projects)`, before);
+      assert.deepStrictEqual(yield* sql`SELECT * FROM issue_tracker_bindings`, []);
+      assert.deepStrictEqual(yield* runMigrations(), []);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("drops the unused correlation index and keeps correlation values", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

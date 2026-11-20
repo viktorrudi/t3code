@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { getProjectWorkspaceRoots } from "@t3tools/contracts";
 import type { Project } from "~/types";
 import { useState } from "react";
@@ -17,6 +18,7 @@ export function ProjectFoldersSettings({
   project: Project;
   disabled: boolean;
 }) {
+  const gt = useGT();
   const [path, setPath] = useState("");
   const [saving, setSaving] = useState(false);
   const updateProject = useOrchestrationCommand(projectEnvironment.update);
@@ -41,22 +43,22 @@ export function ProjectFoldersSettings({
     if (next && !roots.includes(next)) void save(project.workspaceRoot, [...roots.slice(1), next]);
   };
   return (
-    <SettingsSection title="Folders">
+    <SettingsSection title={gt("Folders")}>
       {!supported ? (
         <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
-          Update this environment’s T3 Code server to attach folders.
+          {gt("Update this environment’s T3 Code server to attach folders.")}
         </p>
       ) : null}
       <SettingsRow
-        title="Primary folder"
-        description="New chats, terminals, Git, and worktrees start here."
+        title={gt("Primary folder")}
+        description={gt("New chats, terminals, Git, and worktrees start here.")}
       />
       {roots.map((root, index) => (
         <SettingsRow
           key={root}
           title={root.split(/[\\/]/).filter(Boolean).at(-1) ?? root}
           description={<span className="break-all">{root}</span>}
-          status={index === 0 ? "Primary" : undefined}
+          status={index === 0 ? gt("Primary") : undefined}
           control={
             index === 0 ? undefined : (
               <div className="flex flex-wrap gap-2">
@@ -71,13 +73,13 @@ export function ProjectFoldersSettings({
                     )
                   }
                 >
-                  Make primary
+                  {gt("Make primary")}
                 </Button>
                 <Button
                   size="sm"
                   variant="ghost"
                   disabled={saving || cannotEdit}
-                  aria-label={`Remove folder ${root}`}
+                  aria-label={gt("Remove folder {root}", { root })}
                   onClick={() =>
                     void save(
                       project.workspaceRoot,
@@ -85,7 +87,7 @@ export function ProjectFoldersSettings({
                     )
                   }
                 >
-                  Remove
+                  {gt("Remove")}
                 </Button>
               </div>
             )
@@ -93,8 +95,8 @@ export function ProjectFoldersSettings({
         />
       ))}
       <SettingsRow
-        title="Add folder"
-        description="Use a folder path on the computer that hosts this project."
+        title={gt("Add folder")}
+        description={gt("Use a folder path on the computer that hosts this project.")}
         control={
           <form
             className="flex w-full flex-wrap gap-2 sm:w-96"
@@ -106,7 +108,7 @@ export function ProjectFoldersSettings({
             <div className="min-w-40 flex-1">
               <Input
                 size="sm"
-                aria-label="Folder path"
+                aria-label={gt("Folder path")}
                 placeholder="/path/to/folder"
                 value={path}
                 onChange={(event) => setPath(event.target.value)}
@@ -125,14 +127,15 @@ export function ProjectFoldersSettings({
                 roots.length >= 32
               }
             >
-              {saving ? "Saving…" : "Add folder"}
+              {saving ? gt("Saving…") : gt("Add folder")}
             </Button>
           </form>
         }
       />
       <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
-        Attached folders stay available when the primary folder uses a worktree. Codex and Claude
-        receive folder access automatically; other agents may ask for permission.
+        {gt(
+          "Attached folders stay available when the primary folder uses a worktree. Codex and Claude receive folder access automatically; other agents may ask for permission.",
+        )}
       </p>
     </SettingsSection>
   );

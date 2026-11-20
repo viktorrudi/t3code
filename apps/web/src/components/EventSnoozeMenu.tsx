@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { create } from "zustand";
@@ -40,6 +41,7 @@ function EventSnoozeFields(props: {
   onChoose: (choice: ThreadSnoozeChoice) => void;
   menu?: boolean;
 }) {
+  const gt = useGT();
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.thread.environmentId));
   const [ticket, setTicket] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -65,7 +67,7 @@ function EventSnoozeFields(props: {
         const content = (
           <>
             <PullRequestGlyph.pullRequest aria-hidden className="size-3.5 shrink-0" />
-            <span>Until a PR approval or comment · #{link.number}</span>
+            <span>{gt("Until a PR approval or comment · #{number}", { number: link.number })}</span>
           </>
         );
         return props.menu ? (
@@ -86,7 +88,7 @@ function EventSnoozeFields(props: {
       })}
       {pullRequest && links.length === 0 ? (
         <p className="px-2 py-1 text-xs text-muted-foreground">
-          Link a PR to wait for approval or a comment.
+          {gt("Link a PR to wait for approval or a comment.")}
         </p>
       ) : null}
       {jira ? (
@@ -106,14 +108,14 @@ function EventSnoozeFields(props: {
               htmlFor={`jira-snooze-${props.menu ? "menu" : "dialog"}`}
             >
               <MessageSquareTextIcon aria-hidden className="size-3.5" />
-              Until a Jira comment
+              {gt("Until a Jira comment")}
             </label>
             <div className="flex items-center gap-2">
               <Input
                 id={`jira-snooze-${props.menu ? "menu" : "dialog"}`}
                 size="compact"
-                placeholder="RET-1234"
-                aria-label="Jira ticket"
+                placeholder={gt("RET-1234")}
+                aria-label={gt("Jira ticket")}
                 value={ticket}
                 onValueChange={setTicket}
                 aria-invalid={submitted && !valid}
@@ -123,22 +125,22 @@ function EventSnoozeFields(props: {
               />
               <Button
                 type="submit"
-                aria-label="Snooze until a Jira comment"
+                aria-label={gt("Snooze until a Jira comment")}
                 size="sm"
                 variant="outline"
                 disabled={!configured}
               >
-                Snooze
+                {gt("Snooze")}
               </Button>
             </div>
             {submitted && !valid ? (
               <p role="alert" className="text-xs text-destructive">
-                Enter a ticket key, such as RET-1234.
+                {gt("Enter a ticket key, such as RET-1234.")}
               </p>
             ) : null}
             {!configured ? (
               <p className="text-xs text-muted-foreground">
-                Set up the Jira connection in Settings → Snooze.
+                {gt("Set up the Jira connection in Settings → Snooze.")}
               </p>
             ) : null}
           </form>
@@ -201,7 +203,9 @@ export function EventSnoozeDialogHost() {
     >
       <DialogPopup>
         <DialogHeader>
-          <DialogTitle>Wait for an event</DialogTitle>
+          <DialogTitle>
+            <T>Wait for an event</T>
+          </DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <div className="flex flex-col gap-3">

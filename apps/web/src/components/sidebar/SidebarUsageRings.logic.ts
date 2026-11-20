@@ -1,21 +1,24 @@
+import { msg } from "gt-react";
+import { m as resolveMessage, type MessageResolver } from "../../i18n/messages";
 import type { ServerProvider } from "@t3tools/contracts";
-import {
-  CURSOR_USAGE_WINDOWS,
-  formatDuration,
-  remainingPercent,
-} from "@t3tools/shared/usageLimits";
+import { CURSOR_USAGE_WINDOWS, remainingPercent } from "@t3tools/shared/usageLimits";
+import { formatDuration } from "@t3tools/shared/usageLimitsCopy";
 
-function accountTrack(provider: ServerProvider, name: "Codex" | "Claude" | "Cursor") {
+function accountTrack(
+  provider: ServerProvider,
+  name: "Codex" | "Claude" | "Cursor",
+  m: MessageResolver,
+) {
   const reported = provider.usageLimits?.windows ?? [];
   const selected =
     name === "Cursor"
       ? CURSOR_USAGE_WINDOWS.filter((window) => window.id !== "totalPercentUsed").map((window) => ({
-          label: `${window.label} · Monthly`,
+          label: m(msg("{window} · Monthly", { window: window.label })),
           window: reported.find((reported) => reported.id === window.id),
         }))
       : (name === "Codex" ? (["weekly"] as const) : (["session", "weekly"] as const)).map(
           (kind) => ({
-            label: kind === "session" ? "5h" : "Weekly",
+            label: kind === "session" ? "5h" : m(msg("Weekly")),
             window: reported.find((window) => window.kind === kind),
           }),
         );
@@ -32,10 +35,10 @@ function accountTrack(provider: ServerProvider, name: "Codex" | "Claude" | "Curs
       percent,
       status:
         percent !== null
-          ? `${percent}% left`
+          ? m(msg("{percent}% left", { percent }))
           : provider.auth.status === "unauthenticated"
-            ? "Signed out"
-            : "Unavailable",
+            ? m(msg("Signed out"))
+            : m(msg("Unavailable")),
       resetsAt: percent !== null ? window?.resetsAt : undefined,
     };
   });
@@ -47,7 +50,10 @@ function accountTrack(provider: ServerProvider, name: "Codex" | "Claude" | "Curs
   };
 }
 
-export function sidebarUsageRings(providers: readonly ServerProvider[]) {
+export function sidebarUsageRings(
+  providers: readonly ServerProvider[],
+  m: MessageResolver = resolveMessage,
+) {
   const enabled = providers.filter(
     (provider) => provider.enabled && provider.auth.type !== "customEndpoint",
   );
@@ -65,22 +71,26 @@ export function sidebarUsageRings(providers: readonly ServerProvider[]) {
     enabled.find((provider) => provider.driver === "cursor");
   return {
     personal: [
-      ...(codex ? [accountTrack(codex, "Codex")] : []),
-      ...(personal ? [accountTrack(personal, "Claude")] : []),
+      ...(codex ? [accountTrack(codex, "Codex", m)] : []),
+      ...(personal ? [accountTrack(personal, "Claude", m)] : []),
     ],
     sensoneo: [
-      ...(sensoneo ? [accountTrack(sensoneo, "Claude")] : []),
-      ...(cursor ? [accountTrack(cursor, "Cursor")] : []),
+      ...(sensoneo ? [accountTrack(sensoneo, "Claude", m)] : []),
+      ...(cursor ? [accountTrack(cursor, "Cursor", m)] : []),
     ],
   };
 }
 
-export function sidebarUsageReset(resetsAt: string | undefined, now: number): string {
+export function sidebarUsageReset(
+  resetsAt: string | undefined,
+  now: number,
+  m: MessageResolver = resolveMessage,
+): string {
   const reset = resetsAt ? Date.parse(resetsAt) : Number.NaN;
   if (!Number.isFinite(reset)) return "?";
-  if (reset <= now) return "Due";
+  if (reset <= now) return m(msg("Due"));
   const days = Math.floor((reset - now) / 86_400_000);
-  return days > 0 ? `${days}d` : reset - now < 60_000 ? "<1m" : formatDuration(reset - now);
+  return days > 0 ? `${days}d` : reset - now < 60_000 ? "<1m" : formatDuration(reset - now, m);
 }
 
 export type SidebarUsageTrack = ReturnType<typeof accountTrack>;

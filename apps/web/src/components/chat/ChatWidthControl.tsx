@@ -1,3 +1,4 @@
+import { msg, useGT, useMessages } from "gt-react";
 import type { ChatWidth } from "@t3tools/contracts/settings";
 import { ArrowLeftRightIcon } from "lucide-react";
 
@@ -6,15 +7,20 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const WIDTH_PRESETS: Record<ChatWidth, { label: string; next: ChatWidth }> = {
-  comfortable: { label: "Comfortable", next: "wide" },
-  wide: { label: "Wide", next: "full" },
-  full: { label: "Full width", next: "comfortable" },
+  comfortable: { label: msg("Comfortable"), next: "wide" },
+  wide: { label: msg("Wide"), next: "full" },
+  full: { label: msg("Full width"), next: "comfortable" },
 };
 
 export function ChatWidthControl() {
+  const gt = useGT();
+  const m = useMessages();
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const preset = WIDTH_PRESETS[chatWidth];
-  const label = `Chat width: ${preset.label}. Switch to ${WIDTH_PRESETS[preset.next].label}`;
+  const label = gt("Chat width: {current}. Switch to {next}", {
+    current: m(preset.label),
+    next: m(WIDTH_PRESETS[preset.next].label),
+  });
 
   return (
     <Tooltip>

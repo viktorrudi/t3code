@@ -1,9 +1,11 @@
+import { useGT } from "gt-react";
 import type { ServerSettings } from "@t3tools/contracts";
 import { Input } from "../ui/input";
 import { SettingsRow } from "./settingsLayout";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 export function EventSnoozeSettings() {
+  const gt = useGT();
   const settings = useScopedSettings();
   const update = useUpdateScopedSettings();
   const rules = settings.eventSnoozeRules;
@@ -18,12 +20,14 @@ export function EventSnoozeSettings() {
           key={key}
           serverScoped
           settingKeys={["eventSnoozeRules"]}
-          title={key === "pullRequestProjects" ? "PR event projects" : "Jira event projects"}
-          description="Project names or IDs, separated by commas. Leave empty to disable."
+          title={
+            key === "pullRequestProjects" ? gt("PR event projects") : gt("Jira event projects")
+          }
+          description={gt("Project names or IDs, separated by commas. Leave empty to disable.")}
           control={
             <Input
               aria-label={
-                key === "pullRequestProjects" ? "PR event projects" : "Jira event projects"
+                key === "pullRequestProjects" ? gt("PR event projects") : gt("Jira event projects")
               }
               key={rules[key].join(",")}
               defaultValue={rules[key].join(", ")}
@@ -45,11 +49,11 @@ export function EventSnoozeSettings() {
       <SettingsRow
         serverScoped
         settingKeys={["jiraSnooze"]}
-        title="Jira site"
-        description="The HTTPS address of your Jira site."
+        title={gt("Jira site")}
+        description={gt("The HTTPS address of your Jira site.")}
         control={
           <Input
-            aria-label="Jira site"
+            aria-label={gt("Jira site")}
             key={jira.baseUrl}
             defaultValue={jira.baseUrl}
             onBlur={(event) => saveJira("baseUrl", event.currentTarget.value.trim())}
@@ -59,12 +63,12 @@ export function EventSnoozeSettings() {
       <SettingsRow
         serverScoped
         settingKeys={["jiraSnooze"]}
-        title="Jira email"
-        description="The account used to check for new ticket comments."
+        title={gt("Jira email")}
+        description={gt("The account used to check for new ticket comments.")}
         control={
           <Input
             type="email"
-            aria-label="Jira email"
+            aria-label={gt("Jira email")}
             key={jira.email}
             defaultValue={jira.email}
             onBlur={(event) => saveJira("email", event.currentTarget.value.trim())}
@@ -74,13 +78,15 @@ export function EventSnoozeSettings() {
       <SettingsRow
         serverScoped
         settingKeys={["jiraSnooze"]}
-        title="Jira API token"
-        description="Stored in this environment’s secret store. Only comments your account can read can wake a chat."
+        title={gt("Jira API token")}
+        description={gt(
+          "Stored in this environment’s secret store. Only comments your account can read can wake a chat.",
+        )}
         control={
           <Input
             type="password"
             autoComplete="off"
-            aria-label="Jira API token"
+            aria-label={gt("Jira API token")}
             key={String(jira.apiToken)}
             defaultValue={typeof jira.apiToken === "string" ? jira.apiToken : ""}
             onBlur={(event) => {

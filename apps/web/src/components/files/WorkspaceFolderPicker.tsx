@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 
 export function WorkspaceFolderPicker(props: {
@@ -5,6 +6,7 @@ export function WorkspaceFolderPicker(props: {
   readonly value: string;
   readonly onChange: (root: string) => void;
 }) {
+  const gt = useGT();
   if (props.roots.length < 2) return null;
   return (
     <div className="min-w-0 px-3 py-2">
@@ -14,7 +16,7 @@ export function WorkspaceFolderPicker(props: {
           if (root) props.onChange(root);
         }}
       >
-        <SelectTrigger size="sm" aria-label="Project folder">
+        <SelectTrigger size="sm" aria-label={gt("Project folder")}>
           <SelectValue>
             {props.value.split(/[\\/]/).filter(Boolean).at(-1) ?? props.value}
           </SelectValue>
@@ -23,7 +25,7 @@ export function WorkspaceFolderPicker(props: {
           {props.roots.map((root, index) => (
             <SelectItem key={root} value={root}>
               {root}
-              {index === 0 ? " (primary)" : ""}
+              {index === 0 ? gt(" (primary)") : ""}
             </SelectItem>
           ))}
         </SelectPopup>

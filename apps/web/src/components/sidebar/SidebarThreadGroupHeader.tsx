@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { ContextMenuSource } from "@t3tools/contracts";
 import {
   memo,
@@ -27,6 +28,7 @@ function GroupRenameInput(props: {
   onCommit: (title: string) => void;
   onCancel: () => void;
 }) {
+  const gt = useGT();
   const [title, setTitle] = useState(props.title);
   // Enter and Escape blur the input as it unmounts; that blur must not commit again.
   const doneRef = useRef(false);
@@ -45,7 +47,7 @@ function GroupRenameInput(props: {
       autoFocus
       value={title}
       dir="auto"
-      aria-label="Group title"
+      aria-label={gt("Group title")}
       onChange={(event) => setTitle(event.target.value)}
       onFocus={(event) => event.currentTarget.select()}
       onKeyDown={handleKeyDown}
