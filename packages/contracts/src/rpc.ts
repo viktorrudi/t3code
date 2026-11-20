@@ -102,6 +102,13 @@ import {
   AgentSessionScanError,
 } from "./agentSessions.ts";
 import {
+  JiraIssueDetails,
+  JiraIssueError,
+  JiraIssueInput,
+  JiraIssueTransitionInput,
+  ThreadTicketAnnotations,
+} from "./threadTickets.ts";
+import {
   ThreadGroupTitleError,
   ThreadGroupTitleInput,
   ThreadGroupTitleResult,
@@ -438,6 +445,9 @@ export const WS_METHODS = {
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
   threadGroupsGenerateTitle: "threadGroups.generateTitle",
+  threadTicketsSubscribe: "threadTickets.subscribe",
+  jiraGetIssue: "jira.getIssue",
+  jiraTransitionIssue: "jira.transitionIssue",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -1478,6 +1488,25 @@ const WsThreadGroupsGenerateTitleRpc = Rpc.make(WS_METHODS.threadGroupsGenerateT
   error: Schema.Union([ThreadGroupTitleError, EnvironmentAuthorizationError]),
 });
 
+const WsThreadTicketsSubscribeRpc = Rpc.make(WS_METHODS.threadTicketsSubscribe, {
+  payload: Schema.Struct({}),
+  success: ThreadTicketAnnotations,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsJiraGetIssueRpc = Rpc.make(WS_METHODS.jiraGetIssue, {
+  payload: JiraIssueInput,
+  success: JiraIssueDetails,
+  error: Schema.Union([JiraIssueError, EnvironmentAuthorizationError]),
+});
+
+const WsJiraTransitionIssueRpc = Rpc.make(WS_METHODS.jiraTransitionIssue, {
+  payload: JiraIssueTransitionInput,
+  success: JiraIssueDetails,
+  error: Schema.Union([JiraIssueError, EnvironmentAuthorizationError]),
+});
+
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -2260,6 +2289,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
   WsThreadGroupsGenerateTitleRpc,
+  WsThreadTicketsSubscribeRpc,
+  WsJiraGetIssueRpc,
+  WsJiraTransitionIssueRpc,
   WsAssetsCreateUrlRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,

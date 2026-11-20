@@ -10,10 +10,9 @@ import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { HttpClientRequest } from "effect/http";
+import * as JiraClient from "../personal/JiraClient.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -42,55 +41,16 @@ const decodeJiraComments = Schema.decodeUnknownEffect(JiraComments);
 const isJiraReadError = Schema.is(JiraSnoozeReadError);
 
 const makeJiraComments = Effect.gen(function* () {
-  const settings = yield* ServerSettings.ServerSettingsService;
-  const http = yield* HttpClient.HttpClient;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const jira = yield* JiraClient.JiraClient;
   const latest = Effect.fn("JiraSnoozeComments.latest")(
     function* (issueKey: string) {
-      const { jiraSnooze: config } = yield* settings.getSettings;
-      const origin = yield* Effect.try({
-        try: () => new URL(config.baseUrl),
-        catch: (cause) => new JiraSnoozeReadError({ cause }),
-      });
-      if (
-        origin.protocol !== "https:" ||
-        origin.username ||
-        origin.password ||
-        typeof config.apiToken !== "string" ||
-        !config.apiToken ||
-        !config.email
-      )
-        return yield* new JiraSnoozeReadError({});
-      const token =
-        config.apiToken === "keychain:t3-code-jira-snooze"
-          ? (yield* spawner.string(
-              ChildProcess.make(
-                "/usr/bin/security",
-                ["find-generic-password", "-s", "t3-code-jira-snooze", "-a", config.email, "-w"],
-                { stdin: "ignore", stderr: "ignore" },
-              ),
-            )).trim()
-          : config.apiToken;
-      if (!token) return yield* new JiraSnoozeReadError({});
-      const request = HttpClientRequest.get(
-        `${origin.origin}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`,
-      ).pipe(
-        HttpClientRequest.setUrlParams({ orderBy: "-created", maxResults: "1" }),
-        HttpClientRequest.setHeader("Accept", "application/json"),
-        HttpClientRequest.setHeader(
-          "Authorization",
-          `Basic ${Buffer.from(`${config.email}:${token}`).toString("base64")}`,
+      const response = yield* jira.execute(
+        HttpClientRequest.get(`/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`).pipe(
+          HttpClientRequest.setUrlParams({ orderBy: "-created", maxResults: "1" }),
         ),
       );
-      const response = yield* http
-        .execute(request)
-        .pipe(
-          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
-          Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-        );
       if (response.status !== 200) return yield* new JiraSnoozeReadError({});
-      const body = yield* response.json;
-      const page = yield* decodeJiraComments(body);
+      const page = yield* decodeJiraComments(response.body);
       return page.comments[0]?.created ?? null;
     },
     Effect.mapError((cause) =>
@@ -103,7 +63,9 @@ const makeJiraComments = Effect.gen(function* () {
   );
   return { latest };
 });
-export const layerJiraComments = Layer.effect(JiraSnoozeComments, makeJiraComments);
+export const layerJiraComments = Layer.effect(JiraSnoozeComments, makeJiraComments).pipe(
+  Layer.provide(JiraClient.layer),
+);
 
 function hasNewPullRequestReaction(
   comments: ReadonlyArray<PullRequestComment>,

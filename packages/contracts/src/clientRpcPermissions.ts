@@ -45,6 +45,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsCreateFromThread]: AuthOrchestrationOperateScope,
   // Naming a sidebar thread group runs a model on this environment's providers.
   [WS_METHODS.threadGroupsGenerateTitle]: AuthOrchestrationOperateScope,
+  // Changes the Jira issue with this environment's Jira credentials.
+  [WS_METHODS.jiraTransitionIssue]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlCloneRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlPublishRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlStar]: AuthSourceControlWriteScope,

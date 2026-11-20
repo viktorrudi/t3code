@@ -282,6 +282,8 @@ import {
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as ThreadGroupTitles from "./orchestration-v2/personal/ThreadGroupTitles.ts";
+import * as JiraIssues from "./personal/JiraIssues.ts";
+import * as ThreadTickets from "./personal/ThreadTickets.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
 
@@ -1510,6 +1512,8 @@ export const layerWsRpc = (
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
       const threadGroupTitles = yield* ThreadGroupTitles.ThreadGroupTitles;
+      const threadTickets = yield* ThreadTickets.ThreadTickets;
+      const jiraIssues = yield* JiraIssues.JiraIssues;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
       const keybindings = yield* Keybindings.Keybindings;
@@ -3027,6 +3031,9 @@ export const layerWsRpc = (
         [WS_METHODS.agentSessionsImport]: (input) =>
           agentSessionImporter.importRecentAgentThreads(input),
         [WS_METHODS.threadGroupsGenerateTitle]: (input) => threadGroupTitles.generate(input),
+        [WS_METHODS.threadTicketsSubscribe]: (_input) => threadTickets.changes,
+        [WS_METHODS.jiraGetIssue]: (input) => jiraIssues.get(input),
+        [WS_METHODS.jiraTransitionIssue]: (input) => jiraIssues.transition(input),
         [WS_METHODS.assetsCreateUrl]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {

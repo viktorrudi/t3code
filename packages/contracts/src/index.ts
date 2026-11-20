@@ -76,3 +76,4 @@ export * from "./settingsSecretValue.ts";
 export * from "./clientRpcPermissions.ts";
 export * from "./patternReader.ts";
 export * from "./threadGroups.ts";
+export * from "./threadTickets.ts";
