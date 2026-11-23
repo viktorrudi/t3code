@@ -3078,6 +3078,7 @@ export const layerWsRpc = (
         [WS_METHODS.threadGroupsGenerateTitle]: (input) => threadGroupTitles.generate(input),
         [WS_METHODS.threadTicketsSubscribe]: (_input) => threadTickets.changes,
         [WS_METHODS.threadTicketsSetDeployTarget]: (input) => deployTargets.set(input),
+        [WS_METHODS.threadTicketsAssignRelease]: (input) => deployTargets.assign(input),
         [WS_METHODS.jiraGetIssue]: (input) => jiraIssues.get(input),
         [WS_METHODS.jiraTransitionIssue]: (input) => jiraIssues.transition(input),
         [WS_METHODS.assetsCreateUrl]:

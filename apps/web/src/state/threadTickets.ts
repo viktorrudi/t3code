@@ -35,6 +35,11 @@ export const setDeployTarget = createEnvironmentRpcCommand(connectionAtomRuntime
   tag: WS_METHODS.threadTicketsSetDeployTarget,
 });
 
+export const assignRelease = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:thread-tickets:assign-release",
+  tag: WS_METHODS.threadTicketsAssignRelease,
+});
+
 const NO_TICKETS: ReadonlyArray<ThreadTicket> = [];
 
 /** The Jira tickets linked to a thread, with their deploy state when one is known. */

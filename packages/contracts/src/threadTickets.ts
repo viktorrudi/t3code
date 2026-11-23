@@ -21,6 +21,23 @@ export const ThreadTicketDeployTarget = Schema.Struct({
 });
 export type ThreadTicketDeployTarget = typeof ThreadTicketDeployTarget.Type;
 
+/** A release the ticket could move to, with the env that release targets and the furthest it reached. */
+export const ThreadTicketReleaseChoice = Schema.Struct({
+  id: Schema.String.check(Schema.isMaxLength(32)),
+  env: DeployTargetEnv,
+  reached: Schema.optional(Schema.String.check(Schema.isMaxLength(8))),
+  /** No release branch yet; assigning still works, the branch is cut later. */
+  uncut: Schema.optional(Schema.Boolean),
+});
+export type ThreadTicketReleaseChoice = typeof ThreadTicketReleaseChoice.Type;
+
+export const ThreadTicketReleaseAssignment = Schema.Struct({
+  project: Schema.String.check(Schema.isMaxLength(16)),
+  current: Schema.optional(Schema.String.check(Schema.isMaxLength(32))),
+  choices: Schema.Array(ThreadTicketReleaseChoice).check(Schema.isMaxLength(12)),
+});
+export type ThreadTicketReleaseAssignment = typeof ThreadTicketReleaseAssignment.Type;
+
 export const ThreadTicketDeploy = Schema.Struct({
   label: Schema.String.check(Schema.isMaxLength(40)),
   tone: ThreadTicketDeployTone,
@@ -28,6 +45,7 @@ export const ThreadTicketDeploy = Schema.Struct({
   url: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
   /** Absent when the ticket sits on no release, so there is nothing to point anywhere. */
   target: Schema.optional(ThreadTicketDeployTarget),
+  assign: Schema.optional(ThreadTicketReleaseAssignment),
 });
 export type ThreadTicketDeploy = typeof ThreadTicketDeploy.Type;
 
@@ -86,6 +104,12 @@ export const DeployTargetInput = Schema.Struct({
   env: DeployTargetEnv,
 });
 export type DeployTargetInput = typeof DeployTargetInput.Type;
+
+export const ReleaseAssignInput = Schema.Struct({
+  key: JiraIssueKey,
+  release: Schema.String.check(Schema.isPattern(/^(?:none|\d{1,4}(?:\.\d{1,4})?)$/u)),
+});
+export type ReleaseAssignInput = typeof ReleaseAssignInput.Type;
 
 export class DeployTargetError extends Schema.TaggedError<DeployTargetError>()(
   "DeployTargetError",

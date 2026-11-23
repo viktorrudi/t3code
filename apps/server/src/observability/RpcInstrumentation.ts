@@ -188,6 +188,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.threadGroupsGenerateTitle]: "orchestration",
   [WS_METHODS.threadTicketsSubscribe]: "orchestration",
   [WS_METHODS.threadTicketsSetDeployTarget]: "orchestration",
+  [WS_METHODS.threadTicketsAssignRelease]: "orchestration",
   [WS_METHODS.jiraGetIssue]: "orchestration",
   [WS_METHODS.jiraTransitionIssue]: "orchestration",
   [WS_METHODS.assetsCreateUrl]: "workspace",

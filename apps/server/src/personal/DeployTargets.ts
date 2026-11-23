@@ -1,4 +1,8 @@
-import { DeployTargetError, type DeployTargetInput } from "@t3tools/contracts";
+import {
+  DeployTargetError,
+  type DeployTargetInput,
+  type ReleaseAssignInput,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,6 +18,8 @@ export class DeployTargets extends Context.Service<
   DeployTargets,
   {
     readonly set: (input: DeployTargetInput) => Effect.Effect<void, DeployTargetError>;
+    /** Moves one ticket to another release (or to none) through `deploy-status.mjs assign`. */
+    readonly assign: (input: ReleaseAssignInput) => Effect.Effect<void, DeployTargetError>;
   }
 >()("t3/personal/DeployTargets") {}
 
@@ -23,12 +29,12 @@ const SKILL_ROOT = "/Users/viktorrudi/Documents/Repositories/sensoneo";
 const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const set = Effect.fn("DeployTargets.set")(function* (input: DeployTargetInput) {
-    const command = ChildProcess.make(
-      "/usr/bin/env",
-      ["node", DEPLOY_STATUS, "target", input.project, input.release, input.env],
-      { cwd: SKILL_ROOT, stdin: "ignore", stderr: "pipe" },
-    );
+  const run = Effect.fn("DeployTargets.run")(function* (args: ReadonlyArray<string>) {
+    const command = ChildProcess.make("/usr/bin/env", ["node", DEPLOY_STATUS, ...args], {
+      cwd: SKILL_ROOT,
+      stdin: "ignore",
+      stderr: "pipe",
+    });
     return yield* Effect.scoped(
       Effect.gen(function* () {
         const handle = yield* spawner.spawn(command).pipe(
@@ -52,13 +58,17 @@ const make = Effect.gen(function* () {
         );
         if (Number(code) === 0) return;
         return yield* new DeployTargetError({
-          detail: `deploy-status target exited ${Number(code)}: ${output.trim().slice(-500)}`,
+          detail: `deploy-status ${args[0]} exited ${Number(code)}: ${output.trim().slice(-500)}`,
         });
       }),
     );
   });
 
-  return DeployTargets.of({ set });
+  const set = (input: DeployTargetInput) =>
+    run(["target", input.project, input.release, input.env]);
+  const assign = (input: ReleaseAssignInput) => run(["assign", input.key, input.release]);
+
+  return DeployTargets.of({ set, assign });
 });
 
 export const layer = Layer.effect(DeployTargets, make);

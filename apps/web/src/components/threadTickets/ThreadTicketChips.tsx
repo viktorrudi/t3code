@@ -19,14 +19,13 @@ const keepFromRow = (event: MouseEvent | PointerEvent) => event.stopPropagation(
 
 function TicketDeployBadge({
   environmentId,
+  ticketKey,
   deploy,
 }: {
   environmentId: EnvironmentId | undefined;
+  ticketKey: string;
   deploy: ThreadTicketDeploy;
 }) {
-  if (deploy.target !== undefined && environmentId !== undefined) {
-    return <DeployTargetMenu environmentId={environmentId} deploy={deploy} />;
-  }
   const badge = (
     <Badge
       size="sm"
@@ -47,14 +46,24 @@ function TicketDeployBadge({
       {deploy.label}
     </Badge>
   );
-  if (!deploy.title) return badge;
-  return (
+  const plain = deploy.title ? (
     <Tooltip>
       <TooltipTrigger render={badge} />
       <TooltipPopup side="top" className="whitespace-pre-line">
         {deploy.title}
       </TooltipPopup>
     </Tooltip>
+  ) : (
+    badge
+  );
+  if (environmentId === undefined || (deploy.target ?? deploy.assign) === undefined) return plain;
+  return (
+    <DeployTargetMenu
+      environmentId={environmentId}
+      ticketKey={ticketKey}
+      deploy={deploy}
+      fallback={plain}
+    />
   );
 }
 
@@ -87,7 +96,11 @@ export function ThreadTicketChips({
             <span>{ticket.key}</span>
           </a>
           {ticket.deploy ? (
-            <TicketDeployBadge environmentId={environmentId} deploy={ticket.deploy} />
+            <TicketDeployBadge
+              environmentId={environmentId}
+              ticketKey={ticket.key}
+              deploy={ticket.deploy}
+            />
           ) : null}
         </span>
       ))}
