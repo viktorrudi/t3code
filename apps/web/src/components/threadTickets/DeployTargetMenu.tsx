@@ -9,6 +9,7 @@ import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtim
 import { ChevronDownIcon } from "lucide-react";
 import { useState, type MouseEvent, type PointerEvent } from "react";
 
+import { cn } from "~/lib/utils";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useEnvironmentScope } from "../../state/session";
 import { setDeployTarget } from "../../state/threadTickets";
@@ -25,6 +26,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const DEPLOY_BADGE_VARIANT = {
   success: "success",
@@ -84,58 +86,76 @@ export function DeployTargetMenu({
     }
   };
 
-  const detail = deploy.title?.split("\n").slice(1);
+  const badgeClass =
+    "inline-flex h-full items-center rounded-[inherit] px-1 outline-none transition-colors hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+  const envLabel = deploy.url ? (
+    <a
+      href={deploy.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={deploy.title ?? deploy.label}
+      onPointerDown={keepFromRow}
+      onClick={keepFromRow}
+      className={badgeClass}
+    >
+      {deploy.label}
+    </a>
+  ) : (
+    <span className="px-1">{deploy.label}</span>
+  );
 
   return (
-    <Menu>
-      <MenuTrigger
-        disabled={saving}
-        aria-label={gt("Change the deploy target of {release}", { release: scopeLabel })}
-        onPointerDown={keepFromRow}
-        onClick={keepFromRow}
-        render={
-          <Badge
-            size="sm"
-            variant={DEPLOY_BADGE_VARIANT[deploy.tone]}
-            render={<button type="button" />}
-          />
-        }
-      >
-        {deploy.label}
-        <ChevronDownIcon aria-hidden className="size-2.5 opacity-60" />
-      </MenuTrigger>
-      <MenuPopup align="end" width="content">
-        {/* The badge opens this menu, so its hover detail reads at the top of it instead. */}
-        {detail && detail.length > 0 ? (
-          <>
-            <p className="whitespace-pre-line px-2 py-1 text-muted-foreground text-xs">
-              {detail.join("\n")}
-            </p>
-            <MenuSeparator />
-          </>
-        ) : null}
-        <MenuGroupLabel>
-          {gt("Target for release {release}", { release: scopeLabel })}
-        </MenuGroupLabel>
-        <MenuRadioGroup
-          value={target.env}
-          onValueChange={(value) => void choose(value as DeployTargetEnv)}
+    <Badge size="split" variant={DEPLOY_BADGE_VARIANT[deploy.tone]}>
+      {deploy.title ? (
+        <Tooltip>
+          <TooltipTrigger render={envLabel} />
+          <TooltipPopup side="top" className="whitespace-pre-line">
+            {deploy.title}
+          </TooltipPopup>
+        </Tooltip>
+      ) : (
+        envLabel
+      )}
+      <span aria-hidden className="h-2.5 w-px self-center bg-current opacity-25" />
+      <Menu>
+        <MenuTrigger
+          disabled={saving}
+          aria-label={gt("Change the deploy target of {release}", { release: scopeLabel })}
+          onPointerDown={keepFromRow}
+          onClick={keepFromRow}
+          render={
+            <button
+              type="button"
+              className={cn(badgeClass, "cursor-pointer px-0.5 disabled:opacity-64")}
+            />
+          }
         >
-          {TARGET_CHOICES.map((env) => (
-            <MenuRadioItem key={env} value={env} closeOnClick>
-              {env === "none" ? gt("No target") : env}
-            </MenuRadioItem>
-          ))}
-        </MenuRadioGroup>
-        {deploy.url ? (
-          <>
-            <MenuSeparator />
-            <MenuItem render={<a href={deploy.url} target="_blank" rel="noopener noreferrer" />}>
-              <MenuItemLabel>{gt("Open the deployment")}</MenuItemLabel>
-            </MenuItem>
-          </>
-        ) : null}
-      </MenuPopup>
-    </Menu>
+          <ChevronDownIcon aria-hidden className="size-2.5 opacity-60" />
+        </MenuTrigger>
+        <MenuPopup align="end" width="content">
+          <MenuRadioGroup
+            value={target.env}
+            onValueChange={(value) => void choose(value as DeployTargetEnv)}
+          >
+            <MenuGroupLabel>
+              {gt("Target for release {release}", { release: scopeLabel })}
+            </MenuGroupLabel>
+            {TARGET_CHOICES.map((env) => (
+              <MenuRadioItem key={env} value={env} closeOnClick>
+                {env === "none" ? gt("No target") : env}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+          {deploy.url ? (
+            <>
+              <MenuSeparator />
+              <MenuItem render={<a href={deploy.url} target="_blank" rel="noopener noreferrer" />}>
+                <MenuItemLabel>{gt("Open the deployment")}</MenuItemLabel>
+              </MenuItem>
+            </>
+          ) : null}
+        </MenuPopup>
+      </Menu>
+    </Badge>
   );
 }
