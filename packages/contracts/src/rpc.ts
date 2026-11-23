@@ -102,6 +102,8 @@ import {
   AgentSessionScanError,
 } from "./agentSessions.ts";
 import {
+  DeployTargetError,
+  DeployTargetInput,
   JiraIssueDetails,
   JiraIssueError,
   JiraIssueInput,
@@ -472,6 +474,7 @@ export const WS_METHODS = {
   agentSessionsImport: "agentSessions.import",
   threadGroupsGenerateTitle: "threadGroups.generateTitle",
   threadTicketsSubscribe: "threadTickets.subscribe",
+  threadTicketsSetDeployTarget: "threadTickets.setDeployTarget",
   jiraGetIssue: "jira.getIssue",
   jiraTransitionIssue: "jira.transitionIssue",
   assetsCreateUrl: "assets.createUrl",
@@ -1639,6 +1642,12 @@ const WsThreadTicketsSubscribeRpc = Rpc.make(WS_METHODS.threadTicketsSubscribe, 
   stream: true,
 });
 
+const WsThreadTicketsSetDeployTargetRpc = Rpc.make(WS_METHODS.threadTicketsSetDeployTarget, {
+  payload: DeployTargetInput,
+  success: Schema.Void,
+  error: Schema.Union([DeployTargetError, EnvironmentAuthorizationError]),
+});
+
 const WsJiraGetIssueRpc = Rpc.make(WS_METHODS.jiraGetIssue, {
   payload: JiraIssueInput,
   success: JiraIssueDetails,
@@ -2448,6 +2457,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAgentSessionsImportRpc,
   WsThreadGroupsGenerateTitleRpc,
   WsThreadTicketsSubscribeRpc,
+  WsThreadTicketsSetDeployTargetRpc,
   WsJiraGetIssueRpc,
   WsJiraTransitionIssueRpc,
   WsAssetsCreateUrlRpc,

@@ -1,10 +1,11 @@
 import { useGT } from "gt-react";
-import type { ThreadTicket, ThreadTicketDeploy } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadTicket, ThreadTicketDeploy } from "@t3tools/contracts";
 import type { MouseEvent, PointerEvent } from "react";
 
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { DeployTargetMenu } from "./DeployTargetMenu";
 
 const DEPLOY_BADGE_VARIANT = {
   success: "success",
@@ -16,7 +17,16 @@ const DEPLOY_BADGE_VARIANT = {
 // The chips sit inside a clickable row; a click opens the link without selecting the thread.
 const keepFromRow = (event: MouseEvent | PointerEvent) => event.stopPropagation();
 
-function TicketDeployBadge({ deploy }: { deploy: ThreadTicketDeploy }) {
+function TicketDeployBadge({
+  environmentId,
+  deploy,
+}: {
+  environmentId: EnvironmentId | undefined;
+  deploy: ThreadTicketDeploy;
+}) {
+  if (deploy.target !== undefined && environmentId !== undefined) {
+    return <DeployTargetMenu environmentId={environmentId} deploy={deploy} />;
+  }
   const badge = (
     <Badge
       size="sm"
@@ -51,9 +61,11 @@ function TicketDeployBadge({ deploy }: { deploy: ThreadTicketDeploy }) {
 /** Linked Jira tickets with their flag, key and deploy state. */
 export function ThreadTicketChips({
   tickets,
+  environmentId,
   className,
 }: {
   tickets: ReadonlyArray<ThreadTicket>;
+  environmentId?: EnvironmentId;
   className?: string;
 }) {
   const gt = useGT();
@@ -74,7 +86,9 @@ export function ThreadTicketChips({
             {ticket.flag ? <span aria-hidden>{ticket.flag}</span> : null}
             <span>{ticket.key}</span>
           </a>
-          {ticket.deploy ? <TicketDeployBadge deploy={ticket.deploy} /> : null}
+          {ticket.deploy ? (
+            <TicketDeployBadge environmentId={environmentId} deploy={ticket.deploy} />
+          ) : null}
         </span>
       ))}
     </span>

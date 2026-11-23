@@ -156,7 +156,7 @@ export function ChatHeaderTickets({
     <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
       {tickets.map((ticket) => (
         <div key={ticket.key} className="flex shrink-0 items-center gap-1.5">
-          <ThreadTicketChips tickets={[ticket]} />
+          <ThreadTicketChips tickets={[ticket]} environmentId={environmentId} />
           <JiraTicketStatus environmentId={environmentId} ticket={ticket} />
         </div>
       ))}

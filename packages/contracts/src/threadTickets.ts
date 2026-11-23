@@ -6,11 +6,28 @@ export const THREAD_ANNOTATIONS_FILE = "thread-annotations.json";
 export const ThreadTicketDeployTone = Schema.Literals(["success", "info", "warning", "muted"]);
 export type ThreadTicketDeployTone = typeof ThreadTicketDeployTone.Type;
 
+/** A deploy target; `none` means the release is deliberately not meant to reach any environment. */
+export const DeployTargetEnv = Schema.Literals(["DEV", "QA", "UAT", "PROD", "none"]);
+export type DeployTargetEnv = typeof DeployTargetEnv.Type;
+
+/**
+ * The release whose target the badge shows. The picker edits this exact release rather than the
+ * ticket, because a target belongs to the release: every ticket on it follows the same one.
+ */
+export const ThreadTicketDeployTarget = Schema.Struct({
+  project: Schema.String.check(Schema.isMaxLength(16)),
+  release: Schema.String.check(Schema.isMaxLength(32)),
+  env: DeployTargetEnv,
+});
+export type ThreadTicketDeployTarget = typeof ThreadTicketDeployTarget.Type;
+
 export const ThreadTicketDeploy = Schema.Struct({
   label: Schema.String.check(Schema.isMaxLength(40)),
   tone: ThreadTicketDeployTone,
   title: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
   url: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
+  /** Absent when the ticket sits on no release, so there is nothing to point anywhere. */
+  target: Schema.optional(ThreadTicketDeployTarget),
 });
 export type ThreadTicketDeploy = typeof ThreadTicketDeploy.Type;
 
@@ -62,6 +79,25 @@ export const JiraIssueTransitionInput = Schema.Struct({
   transitionId: Schema.String.check(Schema.isPattern(/^\d{1,9}$/u)),
 });
 export type JiraIssueTransitionInput = typeof JiraIssueTransitionInput.Type;
+
+export const DeployTargetInput = Schema.Struct({
+  project: Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9]{1,15}$/u)),
+  release: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9](?:[\w.-]{0,30})$/u)),
+  env: DeployTargetEnv,
+});
+export type DeployTargetInput = typeof DeployTargetInput.Type;
+
+export class DeployTargetError extends Schema.TaggedError<DeployTargetError>()(
+  "DeployTargetError",
+  {
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 export class JiraIssueError extends Schema.TaggedError<JiraIssueError>()("JiraIssueError", {
   key: Schema.String,

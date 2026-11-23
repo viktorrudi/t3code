@@ -30,6 +30,11 @@ export const transitionJiraIssue = createEnvironmentRpcCommand(connectionAtomRun
   tag: WS_METHODS.jiraTransitionIssue,
 });
 
+export const setDeployTarget = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:thread-tickets:set-deploy-target",
+  tag: WS_METHODS.threadTicketsSetDeployTarget,
+});
+
 const NO_TICKETS: ReadonlyArray<ThreadTicket> = [];
 
 /** The Jira tickets linked to a thread, with their deploy state when one is known. */

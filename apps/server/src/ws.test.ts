@@ -75,6 +75,7 @@ import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/s
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as ThreadGroupTitles from "./orchestration-v2/personal/ThreadGroupTitles.ts";
+import * as DeployTargets from "./personal/DeployTargets.ts";
 import * as JiraIssues from "./personal/JiraIssues.ts";
 import * as ThreadTickets from "./personal/ThreadTickets.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
@@ -831,6 +832,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(AgentSessionImporter.AgentSessionImporter)({}),
   Layer.mock(ThreadGroupTitles.ThreadGroupTitles)({}),
   Layer.mock(ThreadTickets.ThreadTickets)({}),
+  Layer.mock(DeployTargets.DeployTargets)({}),
   Layer.mock(JiraIssues.JiraIssues)({}),
   Layer.mock(AgentSessionScanner.AgentSessionScanner)({}),
   Layer.mock(AnalyticsService.AnalyticsService)({}),

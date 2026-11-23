@@ -217,6 +217,7 @@ import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsag
 import * as UsageService from "./usage/UsageService.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
+import * as DeployTargets from "./personal/DeployTargets.ts";
 import * as JiraClient from "./personal/JiraClient.ts";
 import * as JiraIssues from "./personal/JiraIssues.ts";
 import * as ThreadTickets from "./personal/ThreadTickets.ts";
@@ -696,6 +697,7 @@ const layerServerRestart = Layer.effect(
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ThreadTickets.layer,
+  DeployTargets.layer,
   JiraIssues.layer.pipe(Layer.provide(JiraClient.layer), Layer.provide(FetchHttpClient.layer)),
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,

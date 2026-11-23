@@ -55,6 +55,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.threadGroupsGenerateTitle]: AuthOrchestrationOperateScope,
   // Changes the Jira issue with this environment's Jira credentials.
   [WS_METHODS.jiraTransitionIssue]: AuthOrchestrationOperateScope,
+  // Moves the release's target, which the ticket skill's deploy daemon then acts on.
+  [WS_METHODS.threadTicketsSetDeployTarget]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlCloneRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlPublishRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlStar]: AuthSourceControlWriteScope,

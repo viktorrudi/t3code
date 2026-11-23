@@ -1348,7 +1348,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       ) : (
         <span className="flex-1" />
       )}
-      <ThreadTicketChips tickets={tickets} />
+      <ThreadTicketChips tickets={tickets} environmentId={thread.environmentId} />
       {terminalStatusIcon}
       {prBadge}
       {issueBadge}
