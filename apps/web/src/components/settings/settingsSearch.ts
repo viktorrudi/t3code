@@ -509,6 +509,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "sidebar-show-branches",
+    title: msg("Show branches on sidebar cards"),
+    to: "/settings/personal",
+    targetId: "sidebar-show-branches",
+  },
+  {
     id: "model-mentions",
     title: msg("Use @ to reference models"),
     to: "/settings/personal",

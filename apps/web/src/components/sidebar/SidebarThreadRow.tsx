@@ -138,6 +138,7 @@ import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 import { ThreadDetailsIssueRows } from "../chat/ThreadDetailsIssueRows";
 import { IssueGlyph, issueStatePresentation } from "../issue/issuePresentation";
+import { isSensoneoProject } from "../../personal/projectModels";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -599,6 +600,7 @@ type SidebarThreadRowProps = {
   // "folder" is a one-line row inside a boring sidebar project folder;
   // "folder-multiline" adds the card's branch and PR line under it.
   variant: "card" | "slim" | "grouped" | "folder" | "folder-multiline";
+  showBranch: boolean;
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -1318,9 +1320,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </span>
     ) : null;
   const diff = latestRunDiff(thread);
+  const displayedBranch = props.showBranch ? checkoutThread.branch : null;
+  const showsWorktree = Boolean(checkoutThread.branch && checkoutThread.worktreePath?.trim());
+  const jiraTicketsLead = isSensoneoProject(props.project?.title ?? null) && tickets.length > 0;
+  const ticketChips = (
+    <ThreadTicketChips
+      tickets={tickets}
+      environmentId={thread.environmentId}
+      showJiraDetails={jiraTicketsLead}
+      leaseJiraDetails={leaseLiveStatus}
+    />
+  );
   // Only the trailing icons would remain, so the row moves them to the title line instead.
   const metaLineEmpty =
-    !checkoutThread.branch &&
+    !displayedBranch &&
+    !showsWorktree &&
     !showsScratchMachine &&
     prBadge === null &&
     tickets.length === 0 &&
@@ -1329,13 +1343,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     runningTerminalIds.length === 0;
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-      {checkoutThread.branch ? (
-        <>
-          <ThreadWorktreeIndicator thread={checkoutThread} />
-          <span className="flex min-w-0 flex-1">
-            <MiddleTruncate value={checkoutThread.branch} showTitle={false} />
-          </span>
-        </>
+      {jiraTicketsLead ? ticketChips : null}
+      {showsWorktree ? <ThreadWorktreeIndicator thread={checkoutThread} /> : null}
+      {displayedBranch ? (
+        <span className="flex min-w-0 flex-1">
+          <MiddleTruncate value={displayedBranch} showTitle={false} />
+        </span>
       ) : showsScratchMachine ? (
         <>
           <EnvironmentMachineIcon
@@ -1348,7 +1361,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       ) : (
         <span className="flex-1" />
       )}
-      <ThreadTicketChips tickets={tickets} environmentId={thread.environmentId} />
+      {jiraTicketsLead ? null : ticketChips}
       {terminalStatusIcon}
       {prBadge}
       {issueBadge}
@@ -1624,6 +1637,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           <div
             className={cn(
               "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
+              jiraTicketsLead && tickets.length > 1 && "h-auto min-h-[4.875rem]",
               metaLineEmpty && "h-auto",
             )}
           >

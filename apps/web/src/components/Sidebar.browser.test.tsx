@@ -6,14 +6,16 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import {
   DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
+  type JiraIssueDetails,
   type LocalApi,
   ProjectId,
   ThreadId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -22,14 +24,17 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import { PersonalSettingsPanel } from "../personal/PersonalSettingsPanel";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
+import { jiraIssueAtom, useThreadTickets } from "../state/threadTickets";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
+import { SettingsScopeProvider } from "./settings/SettingsScopeContext";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
 import { SidebarProvider } from "./ui/sidebar";
 
@@ -43,6 +48,7 @@ vi.mock("../hooks/useNowMinute", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
 vi.mock("../state/session", { spy: true });
+vi.mock("../state/threadTickets", { spy: true });
 vi.mock("../state/use-orchestration-command", { spy: true });
 vi.mock("../localApi", { spy: true });
 vi.mock(import("../state/server"), async (original) => {
@@ -137,6 +143,108 @@ function threadShell(projectId: ProjectId, index: number): EnvironmentThreadShel
     title: `Thread ${index}`,
   });
 }
+
+it("toggles branch names while a Sensoneo card leads with its Jira ticket and status", async () => {
+  using stack = new DisposableStack();
+  const style = document.createElement("style");
+  style.textContent = appCss;
+  document.head.append(style);
+  stack.defer(() => style.remove());
+  const storageKey = "t3code:personal:sidebar-show-branches";
+  const previousPreference = localStorage.getItem(storageKey);
+  localStorage.removeItem(storageKey);
+  stack.defer(() => {
+    if (previousPreference === null) localStorage.removeItem(storageKey);
+    else localStorage.setItem(storageKey, previousPreference);
+  });
+  const previousSettings = getClientSettings();
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  stack.defer(() => __setClientSettingsForTests(previousSettings));
+
+  const sensoneo = project("Sensoneo");
+  const personal = project("Personal");
+  const thread = { ...threadShell(sensoneo.id, 0), branch: "fix-ticket" };
+  const otherThread = { ...threadShell(personal.id, 1), branch: "main" };
+  const routeThreadRef = { environmentId: sensoneo.environmentId, threadId: thread.id };
+  vi.mocked(useProjects).mockReturnValue([sensoneo, personal]);
+  vi.mocked(useQuietThreadShells).mockReturnValue([thread, otherThread]);
+  vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
+  vi.mocked(useHandleNewThread).mockReturnValue({
+    activeDraftThread: null,
+    activeThread: null,
+    defaultProjectRef: { environmentId: sensoneo.environmentId, projectId: sensoneo.id },
+    defaultProjectFallbackReady: true,
+    handleNewThread: vi.fn().mockResolvedValue(null),
+    routeDraftId: null,
+    routeThreadRef,
+  });
+  const issue = {
+    key: "RET-123",
+    url: "https://sensoneosk.atlassian.net/browse/RET-123",
+    summary: "Fix the redirect",
+    issueType: "Bug",
+    status: { name: "In Review", category: "indeterminate" },
+    transitions: [],
+    assignee: { displayName: "Sam Tester", avatarUrl: null },
+  } satisfies JiraIssueDetails;
+  const issueResult = Atom.make(AsyncResult.success<JiraIssueDetails>(issue));
+  vi.mocked(jiraIssueAtom).mockReturnValue(issueResult);
+  vi.mocked(useThreadTickets).mockImplementation((_environmentId, id) =>
+    id === thread.id
+      ? [{ key: issue.key, url: issue.url, deploy: { label: "QA", tone: "info" } }]
+      : [],
+  );
+  stack.defer(() => {
+    vi.mocked(jiraIssueAtom).mockReset();
+    vi.mocked(useThreadTickets).mockReset();
+  });
+
+  await using screen = await render(
+    <SidebarProvider>
+      <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      <main className="min-w-0 flex-1">
+        <SettingsScopeProvider search={{}} onChange={() => {}} deviceOnly>
+          <PersonalSettingsPanel />
+        </SettingsScopeProvider>
+      </main>
+    </SidebarProvider>,
+  );
+  const card = screen.getByRole("button", { name: /Thread 0/ });
+  const otherCard = screen.getByRole("button", { name: /Thread 1/ });
+  const ticket = card.getByRole("link", { name: /RET-123/ });
+  const branch = card.getByText("fix-ticket", { exact: true });
+  const otherBranch = otherCard.getByText("main", { exact: true });
+  const status = card.getByText("In Review", { exact: true });
+  const deploy = card.getByText("QA", { exact: true });
+  const assignee = card.getByRole("img", { name: "Sam Tester" });
+  const toggle = screen.getByRole("switch", { name: "Show branches on sidebar cards" });
+  await expect.element(toggle).toBeChecked();
+  await expect.element(otherBranch).toBeInTheDocument();
+  await expect.element(status).toBeVisible();
+  await expect.element(ticket).toHaveAttribute("href", issue.url);
+  expect(
+    ticket.element().compareDocumentPosition(branch.element()) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+
+  await userEvent.click(toggle);
+  await expect.element(toggle).not.toBeChecked();
+  await expect.element(branch).not.toBeInTheDocument();
+  await expect.element(otherBranch).not.toBeInTheDocument();
+  await expect.element(status).toBeVisible();
+  await expect.element(deploy).toBeVisible();
+  await expect.element(assignee).toBeVisible();
+  expect(assignee.element().getBoundingClientRect().right).toBeLessThan(
+    card.element().getBoundingClientRect().right,
+  );
+  expect(localStorage.getItem(storageKey)).toBe("false");
+
+  await userEvent.click(toggle);
+  await expect.element(branch).toBeInTheDocument();
+  await expect.element(otherBranch).toBeInTheDocument();
+
+  await userEvent.hover(assignee);
+  await expect.element(page.getByText("Sam Tester", { exact: true })).toBeVisible();
+});
 
 describe("sidebar render isolation", () => {
   // regression: #33100 Cmd+J re-rendered every sidebar row, which took hundreds of ms with many threads

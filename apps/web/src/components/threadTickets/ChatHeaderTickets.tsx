@@ -2,7 +2,6 @@ import { useGT } from "gt-react";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
-  type JiraIssueStatusCategory,
   type JiraIssueTransition,
   type ThreadId,
   type ThreadTicket,
@@ -22,14 +21,7 @@ import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "../ui/men
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { JiraTicketPicker } from "./JiraTicketPicker";
-import { ThreadTicketChips } from "./ThreadTicketChips";
-
-const STATUS_BADGE_VARIANT = {
-  new: "secondary",
-  indeterminate: "info",
-  done: "success",
-  unknown: "secondary",
-} as const satisfies Record<JiraIssueStatusCategory, string>;
+import { JIRA_STATUS_BADGE_VARIANT, ThreadTicketChips } from "./ThreadTicketChips";
 
 function JiraTicketStatus({
   environmentId,
@@ -82,7 +74,7 @@ function JiraTicketStatus({
   }
 
   const statusBadge = (
-    <Badge size="sm" variant={STATUS_BADGE_VARIANT[issue.status.category]}>
+    <Badge size="sm" variant={JIRA_STATUS_BADGE_VARIANT[issue.status.category]}>
       {issue.status.name}
     </Badge>
   );
