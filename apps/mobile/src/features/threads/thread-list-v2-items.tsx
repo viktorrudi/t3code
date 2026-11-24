@@ -1,7 +1,11 @@
-import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
-import { eventSnoozeAllowed, eventSnoozeLabel, ThreadSnoozeCondition } from "@t3tools/contracts";
-import { serverEnvironment } from "../../state/server";
+import {
+  eventSnoozeAllowed,
+  eventSnoozeLabel,
+  ThreadSnoozeCondition,
+  type EventSnoozeRules,
+  type ThreadTicket,
+} from "@t3tools/contracts";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -20,6 +24,7 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import type { ThreadMoveDestination } from "./threadOrder";
+import type { ThreadGroup } from "../../persistence/mobile-preferences";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -260,13 +265,14 @@ function ThreadListV2Section(props: {
     <>
       <Text
         className={cn(
-          "text-xs font-t3-medium",
+          "shrink text-xs font-t3-medium",
           sidebarPane
             ? "text-drawer-foreground-muted"
             : snoozed
               ? "text-foreground-secondary"
               : "text-foreground-tertiary",
         )}
+        numberOfLines={1}
       >
         {props.label}
       </Text>
@@ -312,6 +318,50 @@ function ThreadListV2Section(props: {
     </Pressable>
   ) : (
     <View className={className}>{content}</View>
+  );
+}
+
+export function ThreadListV2GroupHeader(props: {
+  readonly group: ThreadGroup;
+  readonly count: number;
+  readonly pane: "screen" | "sidebar";
+  readonly onToggle: () => void;
+  readonly onRename: () => void;
+  readonly onUngroup: () => void;
+}) {
+  const gt = useGT();
+  const label = `${props.group.title} · ${props.count}`;
+  return (
+    <View className="flex-row items-center">
+      <View className="min-w-0 flex-1">
+        <ThreadListV2Section
+          label={label}
+          pane={props.pane}
+          disclosure={{
+            expanded: !props.group.collapsed,
+            onToggle: props.onToggle,
+            accessibilityLabel: label,
+            accessibilityHint: props.group.collapsed ? gt("Expand group") : gt("Collapse group"),
+          }}
+        />
+      </View>
+      <Menu
+        accessibilityLabel={gt("Group actions")}
+        accessibilityRole="button"
+        actions={[
+          { id: "rename", title: gt("Rename group"), image: "pencil" },
+          { id: "ungroup", title: gt("Ungroup"), image: "square.stack" },
+        ]}
+        onPressAction={({ nativeEvent }) => {
+          if (nativeEvent.event === "rename") props.onRename();
+          if (nativeEvent.event === "ungroup") props.onUngroup();
+        }}
+      >
+        <View className="h-11 w-11 items-center justify-center">
+          <SymbolView name="ellipsis" size={16} tintColorClassName="accent-icon-muted" />
+        </View>
+      </Menu>
+    </View>
   );
 }
 
@@ -790,6 +840,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly settlementSupported: boolean;
   readonly snoozeSupported: boolean;
   readonly snoozePresets: ReadonlyArray<SnoozePresetSetting> | undefined;
+  readonly eventSnooze?: { readonly rules: EventSnoozeRules; readonly jiraConfigured: boolean };
+  readonly jiraTicket?: ThreadTicket;
   readonly pinningSupported: boolean;
   readonly autoSettleOptOutSupported: boolean;
   readonly titleRegenerationSupported: boolean;
@@ -800,6 +852,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   ) => void;
   readonly canMoveUp?: boolean;
   readonly canMoveDown?: boolean;
+  readonly threadGroups?: ReadonlyArray<ThreadGroup>;
+  readonly onGroupAction?: (thread: EnvironmentThreadShell, action: string) => void;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly activationKey?: string;
@@ -838,6 +892,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onUnpinThread,
     onSetThreadAutoSettle,
     onMoveThread,
+    onGroupAction,
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
@@ -953,6 +1008,28 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
   // Recycling changes identity without remounting; clear local UI directly because equality may skip the render closure.
   const rowIdentity = `${thread.environmentId}:${thread.id}`;
+  const groupActions = useMemo<MenuAction[]>(() => {
+    const groups = props.threadGroups;
+    if (!groups) return [];
+    const current = groups.find((group) => group.members.includes(rowIdentity));
+    return [
+      {
+        id: "thread-group",
+        title: gt("Thread group"),
+        image: "square.stack",
+        subactions: [
+          { id: "thread-group:new", title: gt("New group…"), image: "plus" },
+          ...groups
+            .filter((group) => group !== current)
+            .map((group) => ({
+              id: `thread-group:move:${group.id}`,
+              title: group.title,
+            })),
+          ...(current ? [{ id: "thread-group:remove", title: gt("Remove from group") }] : []),
+        ],
+      },
+    ];
+  }, [props.threadGroups, rowIdentity, gt]);
   const [boundIdentity, setBoundIdentity] = useState(rowIdentity);
   if (boundIdentity !== rowIdentity) {
     setBoundIdentity(rowIdentity);
@@ -999,16 +1076,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     },
     m,
   );
-  const eventSettings = useAtomValue(serverEnvironment.settingsValueAtom(thread.environmentId));
-  const eventConfig = useAtomValue(serverEnvironment.configValueAtom(thread.environmentId));
-  const eventRules =
-    eventConfig?.environment.capabilities.threadEventSnooze === true
-      ? eventSettings?.eventSnoozeRules
-      : undefined;
-  const eventPrLinks =
-    props.project && eventRules && eventSnoozeAllowed(eventRules, props.project, "pull-request")
-      ? thread.pullRequests.filter((link) => link.source !== "stack-dismissed")
-      : [];
+  const eventRules = props.eventSnooze?.rules;
+  const eventPrLinks = useMemo(
+    () =>
+      props.project && eventRules && eventSnoozeAllowed(eventRules, props.project, "pull-request")
+        ? thread.pullRequests.filter((link) => link.source !== "stack-dismissed")
+        : [],
+    [props.project, eventRules, thread.pullRequests],
+  );
   const jiraSnoozeAllowed = Boolean(
     props.project && eventRules && eventSnoozeAllowed(eventRules, props.project, "jira"),
   );
@@ -1143,6 +1218,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : []),
       { id: "copy-thread", title: gt("Copy thread"), image: "text.bubble" },
       { id: "copy-thread-id", title: gt("Copy thread ID"), image: "doc.on.doc" },
+      ...groupActions,
       ...(canShareWithGuest
         ? [{ id: "share-guest", title: gt("Share with guest"), image: "person.badge.plus" }]
         : []),
@@ -1228,6 +1304,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     canShareWithGuest,
     canUnsettle,
     pinMenuItems,
+    groupActions,
     props.settlementSupported,
     reorderMenuItems,
     snoozePresetActions,
@@ -1240,6 +1317,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   ]);
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      if (nativeEvent.event.startsWith("thread-group:")) {
+        onGroupAction?.(thread, nativeEvent.event);
+        return;
+      }
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
@@ -1294,17 +1375,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         return;
       }
       if (nativeEvent.event === "snooze:jira" && jiraSnoozeAllowed) {
-        if (!eventSettings?.jiraSnooze?.email || !eventSettings?.jiraSnooze?.apiToken) {
+        if (!props.eventSnooze?.jiraConfigured) {
           Dialog.alert(
             gt("Jira connection needed"),
-            gt("Set up the Jira connection in web or desktop Settings → Snooze."),
+            gt("Set up the Jira connection in Settings → Threads."),
           );
           return;
         }
         Dialog.prompt({
           title: gt("Until a Jira comment"),
           message: gt("Enter a ticket key, such as RET-1234."),
-          initialValue: "",
+          initialValue: props.jiraTicket?.key ?? "",
           confirmText: gt("Snooze"),
           onConfirm: (value) => {
             const condition = { kind: "jira" as const, issueKey: value.trim().toUpperCase() };
@@ -1338,9 +1419,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       gt,
       m,
       onNewThreadOnBranch,
+      onGroupAction,
       eventPrLinks,
       jiraSnoozeAllowed,
-      eventSettings,
+      props.eventSnooze?.jiraConfigured,
+      props.jiraTicket?.key,
       onSnoozeThread,
       thread,
       navigation,
@@ -1624,6 +1707,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : (
           <View className="flex-1" />
         )}
+        {props.jiraTicket ? (
+          <Text
+            className={cn(
+              "max-w-40 shrink rounded-md bg-card px-1.5 py-0.5 text-xs",
+              selected
+                ? selectedThreadRowColors.mutedForegroundClassName
+                : rowAppearance.tertiaryForegroundClassName,
+            )}
+            numberOfLines={1}
+          >
+            {[props.jiraTicket.flag, props.jiraTicket.key, props.jiraTicket.deploy?.label]
+              .filter(Boolean)
+              .join(" ")}
+          </Text>
+        ) : null}
         {pr ? (
           <Pressable
             // Padding cancelled by negative margin grows the touch target into

@@ -1,5 +1,6 @@
 import { threadPullRequestKeyOf } from "@t3tools/client-runtime/thread-pull-requests";
 import * as Dialog from "../../components/ui/Dialog";
+import { MODEL_DELEGATION_SUFFIX } from "../../lib/modelMentionText";
 import type {
   EnvironmentId,
   ProjectId,
@@ -231,6 +232,7 @@ export function resolveComposerCommandSelection(input: {
   readonly draftMessage: string;
   readonly trigger: Pick<ComposerTrigger, "rangeStart" | "rangeEnd">;
   readonly item: ComposerCommandItem;
+  readonly delegateModelMentions?: boolean;
 }): { readonly text: string; readonly cursor: number } {
   const { draftMessage, trigger, item } = input;
   let replacement = "";
@@ -243,7 +245,11 @@ export function resolveComposerCommandSelection(input: {
   } else if (item.type === "provider-slash-command") {
     replacement = `/${item.command.name} `;
   } else if (item.type === "model") {
-    replacement = `${formatComposerModelMention(item.option.selection.instanceId, item.option.selection.model)} `;
+    const reference = formatComposerModelMention(
+      item.option.selection.instanceId,
+      item.option.selection.model,
+    );
+    replacement = `${reference}${input.delegateModelMentions ? MODEL_DELEGATION_SUFFIX : ""} `;
   }
   return replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, replacement);
 }
@@ -270,6 +276,7 @@ export function useComposerCommandMenu({
   onOpenModelPicker,
   modelOptions,
   modelProviders,
+  delegateModelMentions,
   onFreshSession,
   offersSideChat = false,
 }: {
@@ -296,6 +303,7 @@ export function useComposerCommandMenu({
   readonly onOpenModelPicker: () => void;
   readonly modelOptions?: ReadonlyArray<ModelOption>;
   readonly modelProviders?: ReadonlyArray<ServerProvider>;
+  readonly delegateModelMentions?: boolean;
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
   readonly onFreshSession?: () => void;
   readonly offersSideChat?: boolean;
@@ -685,7 +693,12 @@ export function useComposerCommandMenu({
       return;
     }
 
-    const result = resolveComposerCommandSelection({ draftMessage, trigger, item });
+    const result = resolveComposerCommandSelection({
+      draftMessage,
+      trigger,
+      item,
+      delegateModelMentions,
+    });
     setSelection({ start: result.cursor, end: result.cursor });
     onChangeDraftMessage(result.text);
   };

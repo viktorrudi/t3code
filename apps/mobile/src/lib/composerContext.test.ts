@@ -207,6 +207,21 @@ describe("mobile composer context", () => {
     expect(collectComposerModelTokens("model:codex/gpt-6.1", known, kept)).toEqual([]);
   });
 
+  it("keeps the delegation instruction inside the model chip's deletion range", () => {
+    const source = "model:claudeAgent/claude-opus-5-5 as subagent";
+    const text = `Ask ${source} to review this.`;
+    const known = new Set([source]);
+    expect(collectComposerModelTokens(text, known)).toEqual([
+      {
+        instanceId: "claudeAgent",
+        model: "claude-opus-5-5",
+        source,
+        start: 4,
+        end: 4 + source.length,
+      },
+    ]);
+  });
+
   it("rejects citation drafts exceeding either encoded or expanded input limits", () => {
     const quote = (text: string) =>
       serializeAssistantCitation({

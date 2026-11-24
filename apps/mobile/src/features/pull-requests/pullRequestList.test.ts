@@ -20,6 +20,7 @@ import {
   pullRequestLabelColors,
   pullRequestListHead,
   pullRequestListInput,
+  pullRequestProjectInput,
   scopedPullRequestListKey,
   shownPullRequestListPages,
   pullRequestListRowsAreEqual,
@@ -56,6 +57,31 @@ function entry(number: number, patch: Partial<PullRequestListEntry> = {}): PullR
     ...patch,
   };
 }
+
+it("keeps multiple selected PR projects scoped to their environment", () => {
+  const controls = {
+    ...DEFAULT_PR_LIST_CONTROLS,
+    projects: [
+      { environmentId: "work", projectId: "frontend" },
+      { environmentId: "work", projectId: "api" },
+      { environmentId: "home", projectId: "frontend" },
+    ],
+  };
+  expect(pullRequestProjectInput(controls, "work")).toEqual({ projectIds: ["api", "frontend"] });
+  expect(pullRequestProjectInput(controls, "other")).toBeNull();
+  const result = filterPullRequestList(
+    [
+      { ...entry(1, { projectId: ProjectId.make("api") }), environmentId: "work" },
+      { ...entry(2, { projectId: ProjectId.make("api") }), environmentId: "home" },
+      { ...entry(3, { projectId: ProjectId.make("frontend") }), environmentId: "home" },
+    ],
+    controls,
+    {},
+    "",
+    new Set(),
+  );
+  expect(result.map(({ number }) => number).sort()).toEqual([1, 3]);
+});
 function page(
   entries: readonly PullRequestListEntry[],
   nextCursors: PullRequestListResult["nextCursors"] = {},

@@ -58,6 +58,7 @@ import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 import { usePullRequestConnected } from "../pull-requests/usePullRequestConnected";
 import { IssueCommentComposer } from "./IssueCommentComposer";
 import { issueIdentity, issueParamsKey, issueTarget, type IssueParams } from "./issueParams";
+import { useJiraIssueMenu } from "./useJiraIssueMenu";
 import {
   IssueLabelPill,
   issueCommandError,
@@ -511,6 +512,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const detail = detailQuery.data;
   const issue: IssueSummary | null = detail ?? params.initialSummary ?? null;
   const access = useIssueAccess(params, detail);
+  const jiraActions = useJiraIssueMenu(target.environmentId, issue, detailQuery.refresh);
 
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
   const postComment = useAtomCommand(issueEnvironment.comment, { reportFailure: false });
@@ -596,6 +598,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
               title: gt("Issue actions"),
               icon: "ellipsis",
               items: [
+                ...jiraActions,
                 ...(access?.edit
                   ? [
                       {

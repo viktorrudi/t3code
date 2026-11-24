@@ -1,4 +1,5 @@
 import type { Preferences, PullRequestSavedView } from "../../persistence/mobile-preferences";
+import { selectedPullRequestProjects } from "./pullRequestList";
 
 export type PullRequestSavedViewScope = Pick<
   PullRequestSavedView,
@@ -16,8 +17,10 @@ export function pullRequestViewMatches(
       controls.state,
       controls.involvement,
       controls.sort,
-      controls.projectId,
-      controls.projectEnvironmentId,
+      selectedPullRequestProjects(controls)
+        .map(({ environmentId, projectId }) => JSON.stringify([environmentId, projectId]))
+        .sort(),
+      controls.projectEnvironmentId ? undefined : controls.projectId,
       controls.filters.draft,
       controls.filters.review,
       controls.filters.checks,

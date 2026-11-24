@@ -1,10 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
-import { collectComposerModelMentions } from "@t3tools/client-runtime/composer-model-mentions";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
 import { buildEnrichedModelReferences } from "../lib/enrichedLinkPresentation";
+import { collectMobileModelMentions } from "../lib/modelMentionText";
 import type { SelectableMarkdownModel } from "../native/SelectableMarkdownText.types";
 import { serverEnvironment } from "./server";
 
@@ -38,7 +38,7 @@ const modelMentionsAtom = Atom.family((key: string) => {
 
 export function useModelMentions(environmentId: EnvironmentId | undefined, markdown: string) {
   const sources = [
-    ...new Set(collectComposerModelMentions(markdown).map((mention) => mention.source)),
+    ...new Set(collectMobileModelMentions(markdown).map((mention) => mention.source)),
   ].sort();
   return useAtomValue(
     environmentId && sources.length

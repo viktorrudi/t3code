@@ -4,7 +4,6 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
   EnvironmentId,
-  ProjectId,
   type PullRequestFilterOptionKind,
   type PullRequestFilterOptionsInput,
 } from "@t3tools/contracts";
@@ -19,7 +18,11 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { SelectionRow } from "../../components/ui/SelectionRow";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useDebouncedValue } from "../../state/queries";
-import { pullRequestFilterChoices, pullRequestLabelColors } from "./pullRequestList";
+import {
+  pullRequestFilterChoices,
+  pullRequestLabelColors,
+  pullRequestProjectInput,
+} from "./pullRequestList";
 import { PullRequestLabelDot } from "./PullRequestLabelDot";
 import { PullRequestSearchSheet } from "./PullRequestSearchSheet";
 import { usePullRequestListControls } from "./usePullRequestListControls";
@@ -65,14 +68,17 @@ export function PullRequestFilterSearchScreen({
   // Until the search catches up with the typing, the host's answers are for older text.
   const settled = sent === typed;
   const key = JSON.stringify(
-    environmentIds.map((id) => ({
-      environmentId: EnvironmentId.make(id),
-      input: {
-        kind,
-        ...(controls.projectId ? { projectId: ProjectId.make(controls.projectId) } : {}),
-        ...(sent ? { query: sent } : {}),
-      },
-    })),
+    environmentIds.flatMap((id) => {
+      const scope = pullRequestProjectInput(controls, id);
+      return scope === null
+        ? []
+        : [
+            {
+              environmentId: EnvironmentId.make(id),
+              input: { kind, ...scope, ...(sent ? { query: sent } : {}) },
+            },
+          ];
+    }),
   );
   const hosted = useAtomValue(optionsFamily(key));
   const selectedLabels = controls.filters.labels?.flat() ?? [];

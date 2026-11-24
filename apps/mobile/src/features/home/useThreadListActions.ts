@@ -42,6 +42,8 @@ import {
 import { getThreadListV2OrderedSection } from "../threads/threadListV2";
 import { threadCanArchive } from "./threadArchive";
 import { resolveThreadTitleRename } from "../threads/thread-title-rename";
+import { saveMobilePreferences } from "../../state/preferences";
+import { moveThreadToGroup } from "../threads/threadGroups";
 
 function environmentConfigLoaded(environmentId: EnvironmentThreadShell["environmentId"]) {
   return appAtomRegistry.get(environmentServerConfigsAtom).has(environmentId);
@@ -113,6 +115,7 @@ function useThreadActionExecutor(
   const deleteMutation = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const settleMutation = useAtomCommand(threadEnvironment.settle, { reportFailure: false });
   const unsettleMutation = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const latestPendingActions = useRef(new Map<string, { readonly action: ThreadListAction }>());
 
   const executeAction = async (
@@ -193,7 +196,15 @@ function useThreadActionExecutor(
       if (action === "archive" || action === "unarchive" || action === "delete") {
         refreshArchivedThreadsForEnvironment(thread.environmentId);
       }
-      if (action === "delete") clearComposerDraft(key);
+      if (action === "delete") {
+        clearComposerDraft(key);
+        void savePreferences({
+          transform: (current) =>
+            current.threadGroups?.some((group) => group.members.includes(key))
+              ? { threadGroups: moveThreadToGroup(current.threadGroups, key, null) }
+              : {},
+        });
+      }
       onCompleted?.(action, thread);
       return true;
     })();

@@ -70,9 +70,11 @@ import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollR
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
+import { jiraThreadAnnotationsAtom } from "../../state/jira";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
+  ThreadListV2GroupHeader,
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
@@ -90,6 +92,8 @@ import {
   type ThreadListV2ListItem,
 } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
+import { groupActiveThreadRows } from "../threads/threadGroups";
+import { useThreadGroups } from "../threads/useThreadGroups";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeProjectScopes,
@@ -399,12 +403,14 @@ export function HomeScreen(props: HomeScreenProps) {
   } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(props.threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
+  const jiraThreadAnnotations = useAtomValue(jiraThreadAnnotationsAtom);
   const {
     providersByEnvironmentId,
     machineByEnvironmentId,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
     snoozePresetsByEnvironmentId,
+    eventSnoozeByEnvironmentId,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds,
@@ -415,7 +421,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const pendingOrder = usePendingThreadOrder();
   const {
     layout: threadListV2Layout,
-    items: threadListV2Items,
+    items: ungroupedThreadListItems,
     contentOnlyThreadKeys,
     olderSettledShelf,
   } = useThreadListV2({
@@ -440,6 +446,10 @@ export function HomeScreen(props: HomeScreenProps) {
     settledShelfExpanded,
     selectedThreadKey,
   });
+  const threadGroups = useThreadGroups();
+  const threadListV2Items = props.searchQuery.trim()
+    ? ungroupedThreadListItems
+    : groupActiveThreadRows(ungroupedThreadListItems, threadGroups.groups);
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
   // props object, which is new on every render of Home's parent.
   const { onSelectThread } = props;
@@ -462,6 +472,18 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [activateVisibleRows, swipeEnabled, threadListV2Items]);
 
   const renderV2Item = ({ item }: { readonly item: ThreadListV2ListItem }) => {
+    if (item.type === "v2-thread-group") {
+      return (
+        <ThreadListV2GroupHeader
+          pane={sidebarSurface ? "sidebar" : "screen"}
+          group={item.group}
+          count={item.count}
+          onToggle={() => threadGroups.toggle(item.group.id)}
+          onRename={() => threadGroups.rename(item.group)}
+          onUngroup={() => threadGroups.ungroup(item.group.id)}
+        />
+      );
+    }
     if (item.type === "v2-pending") {
       const pendingScopeKey = scopedProjectKey(
         item.pendingTask.environmentId,
@@ -575,6 +597,8 @@ export function HomeScreen(props: HomeScreenProps) {
         onSettleThread={handleSettleThread}
         snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
         snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
+        eventSnooze={eventSnoozeByEnvironmentId.get(thread.environmentId)}
+        jiraTicket={jiraThreadAnnotations.get(thread.environmentId)?.[thread.id]?.[0]}
         pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
         autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
         reorderSupported={
@@ -584,6 +608,12 @@ export function HomeScreen(props: HomeScreenProps) {
         }
         canMoveUp={item.canMoveUp}
         canMoveDown={item.canMoveDown}
+        threadGroups={
+          item.item.variant === "card" && !item.item.pinned && threadGroups.loaded
+            ? threadGroups.groups
+            : undefined
+        }
+        onGroupAction={threadGroups.onRowAction}
         onSnoozeThread={handleSnoozeThread}
         onUnsnoozeThread={handleUnsnoozeThread}
         onUnsettleThread={handleUnsettleThread}
@@ -606,10 +636,12 @@ export function HomeScreen(props: HomeScreenProps) {
     projectByKey,
     projectTitleByProjectKey: v2ProjectTitleByProjectKey,
     listEnvironments,
+    jiraThreadAnnotations,
     savedConnectionsById: props.savedConnectionsById,
     searchQuery: props.searchQuery,
     selectedThreadKey,
     threadSearchMatchByKey,
+    threadGroups: threadGroups.loaded ? threadGroups.groups : undefined,
     workingShelfEnabled,
   };
 

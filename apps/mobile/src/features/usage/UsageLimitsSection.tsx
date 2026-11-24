@@ -58,13 +58,14 @@ function WindowRow(props: {
   readonly window: ServerProviderUsageWindow;
   readonly color: string | null;
   readonly now: number;
+  readonly showReset: boolean;
 }) {
   const { window, now } = props;
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const pace = paceOf(window, now);
   const m = useMessages();
-  const resetsIn = resetLabels(window, now, m)?.full;
+  const resetsIn = props.showReset ? resetLabels(window, now, m)?.full : undefined;
   const [barWidth, setBarWidth] = useState(0);
   const tickX =
     timeLeft === null || barWidth < 6
@@ -189,6 +190,14 @@ export function AccountLimits(props: {
   if (!limits) return null;
   const notice = limitsNotice(limits, m);
   const externalUsage = limits.externalUsage;
+  const firstWindow = limits.windows[0];
+  const sharedReset =
+    props.driver === "cursor" &&
+    limits.windows.length > 1 &&
+    firstWindow?.resetsAt &&
+    limits.windows.every((window) => window.resetsAt === firstWindow.resetsAt)
+      ? resetLabels(firstWindow, now, m)
+      : null;
   const padding = dense ? "px-4 py-3" : "p-4";
   return (
     <View
@@ -216,8 +225,19 @@ export function AccountLimits(props: {
       ) : (
         <View className="gap-3">
           {limits.windows.map((window) => (
-            <WindowRow key={window.id} window={window} color={color} now={now} />
+            <WindowRow
+              key={window.id}
+              window={window}
+              color={color}
+              now={now}
+              showReset={sharedReset === null}
+            />
           ))}
+          {sharedReset ? (
+            <Text className="text-xs tabular-nums text-foreground-tertiary">
+              {sharedReset.full}
+            </Text>
+          ) : null}
         </View>
       )}
       {externalUsage ? (

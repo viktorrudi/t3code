@@ -66,6 +66,7 @@ import { cn } from "../../lib/cn";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import {
   buildModelOptions,
+  restrictProjectModelOptions,
   groupByProvider,
   serverConfigForCwd,
   type ModelOption,
@@ -83,7 +84,7 @@ import { ChatGptSharingStatus } from "./ChatGptSharingStatus";
 import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentQuery } from "../../state/query";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { useThreadReportedModelSelection } from "../../state/entities";
+import { useProject, useThreadReportedModelSelection } from "../../state/entities";
 import {
   setComposerDraftText,
   updateComposerDraftSettings,
@@ -361,6 +362,11 @@ function ThreadSettingsSessionProvider(
   const preferences = useAtomValue(mobilePreferencesAtom);
   const configs = useAtomValue(environmentServerConfigsAtom);
   const config = props.environmentId ? configs.get(props.environmentId) : undefined;
+  const project = useProject(
+    props.environmentId && props.projectId
+      ? { environmentId: props.environmentId, projectId: props.projectId }
+      : null,
+  );
   const settings = config?.settings;
   const connection = useEnvironmentQuery(
     props.environmentId ? environmentCatalog.stateAtom(props.environmentId) : null,
@@ -375,12 +381,17 @@ function ThreadSettingsSessionProvider(
   const providerGroups =
     manageHidden && config
       ? groupByProvider(
-          buildModelOptions(
-            serverConfigForCwd(config, props.cwd),
+          restrictProjectModelOptions(
+            buildModelOptions(
+              serverConfigForCwd(config, props.cwd),
+              props.selectedModel,
+              props.lockedProviderInstanceId,
+              props.projectId,
+              true,
+            ),
+            config,
+            project?.title ?? null,
             props.selectedModel,
-            props.lockedProviderInstanceId,
-            props.projectId,
-            true,
           ),
         )
       : props.providerGroups;
@@ -1498,8 +1509,12 @@ export function ExistingThreadSettingsRouteScreen({
 }: StaticScreenProps<ExistingThreadSettingsRouteParams>) {
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
   // Reads the same environmentId/threadId params as the Thread route beneath it.
-  const { selectedThread, selectedThreadDetailRef, selectedEnvironmentRuntime } =
-    useThreadSelection();
+  const {
+    selectedThread,
+    selectedThreadProject,
+    selectedThreadDetailRef,
+    selectedEnvironmentRuntime,
+  } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   // Streamed text would otherwise re-render the whole model picker on every delta.
   const structure = useQuietThreadStructure(selectedThreadDetailRef);
@@ -1526,11 +1541,16 @@ export function ExistingThreadSettingsRouteScreen({
   })
     ? undefined
     : modelSelection.instanceId;
-  const modelOptions = buildModelOptions(
+  const modelOptions = restrictProjectModelOptions(
+    buildModelOptions(
+      serverConfig,
+      modelSelection,
+      lockedProviderInstanceId,
+      selectedThread.projectId,
+    ),
     serverConfig,
+    selectedThreadProject?.title ?? null,
     modelSelection,
-    lockedProviderInstanceId,
-    selectedThread.projectId,
   );
   const currentModelOption =
     modelOptions.find(

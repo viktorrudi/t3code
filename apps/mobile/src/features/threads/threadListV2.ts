@@ -1,4 +1,5 @@
 import { msg } from "gt-react-native";
+import type { ThreadGroup } from "../../persistence/mobile-preferences";
 import {
   canSnooze,
   effectiveSnoozed,
@@ -486,7 +487,13 @@ export type ThreadListV2ListItem =
   | ThreadListV2PendingListItem
   | ThreadListV2WorkingShelfListItem
   | ThreadListV2SnoozedShelfListItem
-  | ThreadListV2SettledShelfListItem;
+  | ThreadListV2SettledShelfListItem
+  | {
+      readonly type: "v2-thread-group";
+      readonly key: string;
+      readonly group: ThreadGroup;
+      readonly count: number;
+    };
 
 export function isThreadListV2ListItem(value: {
   readonly type: string;
@@ -496,7 +503,8 @@ export function isThreadListV2ListItem(value: {
     value.type === "v2-pending" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
-    value.type === "v2-settled-shelf"
+    value.type === "v2-settled-shelf" ||
+    value.type === "v2-thread-group"
   );
 }
 
@@ -506,6 +514,12 @@ export function threadListV2ListItemsAreEqual(
   item: ThreadListV2ListItem,
 ): boolean {
   switch (item.type) {
+    case "v2-thread-group":
+      return (
+        previous.type === "v2-thread-group" &&
+        previous.group === item.group &&
+        previous.count === item.count
+      );
     case "v2-thread":
       return (
         previous.type === "v2-thread" &&
@@ -678,6 +692,10 @@ export function buildThreadListV2ListItems(input: {
     });
     result.push(...threadItems.slice(settledShelfHeaderIndex));
   }
+  return withThreadListV2Dividers(result);
+}
+
+export function withThreadListV2Dividers(result: ReadonlyArray<ThreadListV2ListItem>) {
   return result.map((entry, index) => {
     if (entry.type !== "v2-thread" && entry.type !== "v2-pending") return entry;
     const next = result[index + 1];

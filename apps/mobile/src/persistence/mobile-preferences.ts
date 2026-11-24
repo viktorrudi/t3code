@@ -32,12 +32,18 @@ const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
+const ThreadProject = Schema.Struct({
+  environmentId: Schema.NonEmptyString,
+  projectId: Schema.NonEmptyString,
+});
+
 export const PullRequestListControls = Schema.Struct({
   state: PullRequestListState,
   involvement: PullRequestInvolvement,
   filters: PullRequestListFilters,
   projectId: Schema.optional(Schema.String),
   projectEnvironmentId: Schema.optional(Schema.String),
+  projects: Schema.optional(Schema.Array(ThreadProject)),
   sort: Schema.Literals(["updated", "created", "oldest"]),
 });
 export type PullRequestListControls = typeof PullRequestListControls.Type;
@@ -127,11 +133,16 @@ const isThreadListFilters = Schema.is(ThreadListFilters);
 const isPullRequestActivityVisibility = Schema.is(PullRequestActivityVisibility);
 const isWorkspaceSelections = Schema.is(WorkspaceSelections);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
-const ThreadProject = Schema.Struct({
-  environmentId: Schema.NonEmptyString,
-  projectId: Schema.NonEmptyString,
-});
 const isThreadProject = Schema.is(ThreadProject);
+
+const ThreadGroup = Schema.Struct({
+  id: Schema.NonEmptyString,
+  title: Schema.NonEmptyString,
+  members: Schema.Array(Schema.NonEmptyString),
+  collapsed: Schema.Boolean,
+});
+export type ThreadGroup = typeof ThreadGroup.Type;
+const isThreadGroup = Schema.is(ThreadGroup);
 
 export interface Preferences {
   readonly navigationTabOrder?: readonly string[];
@@ -179,6 +190,7 @@ export interface Preferences {
   readonly threadListSnoozedShelfExpanded?: boolean;
   readonly threadListWorkingShelfExpanded?: boolean;
   readonly threadListFilters?: ThreadListFilters;
+  readonly threadGroups?: ReadonlyArray<ThreadGroup>;
   readonly pullRequestListFilters?: PullRequestListPreferences;
   readonly workspaceSelections?: WorkspaceSelections;
   readonly pullRequestSavedViews?: ReadonlyArray<PullRequestSavedView>;
@@ -266,6 +278,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListSnoozedShelfExpanded?: boolean;
     threadListWorkingShelfExpanded?: boolean;
     threadListFilters?: ThreadListFilters;
+    threadGroups?: ReadonlyArray<ThreadGroup>;
     pullRequestListFilters?: PullRequestListPreferences;
     workspaceSelections?: WorkspaceSelections;
     pullRequestSavedViews?: ReadonlyArray<PullRequestSavedView>;
@@ -422,6 +435,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isThreadListFilters(parsed.threadListFilters)) {
     preferences.threadListFilters = parsed.threadListFilters;
+  }
+  if (Array.isArray(parsed.threadGroups)) {
+    preferences.threadGroups = parsed.threadGroups.filter(isThreadGroup);
   }
   if (isPullRequestListPreferences(parsed.pullRequestListFilters)) {
     preferences.pullRequestListFilters = parsed.pullRequestListFilters;

@@ -12,6 +12,8 @@ import {
 
 import {
   buildModelOptions,
+  modelConfigForNewProject,
+  selectionForNewProject,
   describeUnavailableModelSelection,
   groupByProvider,
   isModelSelectionUnavailable,
@@ -24,6 +26,25 @@ import {
 import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
 
 describe("mobile model options", () => {
+  it("keeps saved personal defaults out of work projects without changing stock environments", () => {
+    const config = {
+      providers: [
+        { instanceId: "codex" },
+        { instanceId: "claude-sensoneo" },
+        { instanceId: "cursor" },
+      ],
+    } as unknown as ServerConfig;
+    const personal = { instanceId: ProviderInstanceId.make("codex"), model: "gpt" };
+    const stock = { ...config, providers: [config.providers[0]!, config.providers[2]!] };
+    expect(
+      modelConfigForNewProject(config, "Sensoneo Frontend").providers.map(
+        (provider) => provider.instanceId,
+      ),
+    ).toEqual(["claude-sensoneo", "cursor"]);
+    expect(selectionForNewProject(personal, config, "Sensoneo")).toBeNull();
+    expect(selectionForNewProject(personal, config, "Personal")).toBe(personal);
+    expect(modelConfigForNewProject(stock, "Personal")).toBe(stock);
+  });
   it("distinguishes same-name OpenCode models without changing their routing", () => {
     const sources = [
       { id: "anthropic", label: "Anthropic" },

@@ -32,6 +32,7 @@ import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-pref
 import { useThreadListNow } from "./use-thread-list-now";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
+import { jiraThreadAnnotationsAtom } from "../../state/jira";
 import {
   useLaunchingThreads,
   usePendingNewTasks,
@@ -41,6 +42,8 @@ import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useThreadListV2 } from "./useThreadListV2";
+import { useThreadGroups } from "./useThreadGroups";
+import { groupActiveThreadRows } from "./threadGroups";
 import { useSidebarRowThreadKey } from "./useSidebarRowThreadKey";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { requestThreadMessageJump } from "./threadMessageJump";
@@ -62,6 +65,7 @@ import { useFabScroll } from "../home/FabScrollContext";
 import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
 import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
 import {
+  ThreadListV2GroupHeader,
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
@@ -257,12 +261,14 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
+  const jiraThreadAnnotations = useAtomValue(jiraThreadAnnotationsAtom);
   const {
     providersByEnvironmentId,
     machineByEnvironmentId,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
     snoozePresetsByEnvironmentId,
+    eventSnoozeByEnvironmentId,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds,
@@ -273,7 +279,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const pendingOrder = usePendingThreadOrder();
   const {
     layout: threadListV2Layout,
-    items: threadListV2Items,
+    items: ungroupedThreadListItems,
     contentOnlyThreadKeys,
     olderSettledShelf,
   } = useThreadListV2({
@@ -298,6 +304,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     settledShelfExpanded,
     selectedThreadKey,
   });
+  const threadGroups = useThreadGroups();
+  const threadListV2Items = props.searchQuery.trim()
+    ? ungroupedThreadListItems
+    : groupActiveThreadRows(ungroupedThreadListItems, threadGroups.groups);
   const listItems: readonly SidebarListItem[] =
     settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
       ? [
@@ -364,6 +374,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     projectTitleByProjectKey,
     savedConnectionsById,
     listEnvironments,
+    jiraThreadAnnotations,
+    threadGroups: threadGroups.loaded ? threadGroups.groups : undefined,
     threadSearchMatchByKey,
     workingShelfEnabled,
   };
@@ -379,6 +391,17 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   };
   const renderListItem = ({ item }: { readonly item: SidebarListItem }) => {
     switch (item.type) {
+      case "v2-thread-group":
+        return (
+          <ThreadListV2GroupHeader
+            pane="sidebar"
+            group={item.group}
+            count={item.count}
+            onToggle={() => threadGroups.toggle(item.group.id)}
+            onRename={() => threadGroups.rename(item.group)}
+            onUngroup={() => threadGroups.ungroup(item.group.id)}
+          />
+        );
       case "v2-pending": {
         const pendingScopeKey = scopedProjectKey(
           item.pendingTask.environmentId,
@@ -468,6 +491,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             onSettleThread={settleThread}
             snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
             snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
+            eventSnooze={eventSnoozeByEnvironmentId.get(thread.environmentId)}
+            jiraTicket={jiraThreadAnnotations.get(thread.environmentId)?.[thread.id]?.[0]}
             pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
             autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
             reorderSupported={
@@ -477,6 +502,12 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             }
             canMoveUp={item.canMoveUp}
             canMoveDown={item.canMoveDown}
+            threadGroups={
+              item.item.variant === "card" && !item.item.pinned && threadGroups.loaded
+                ? threadGroups.groups
+                : undefined
+            }
+            onGroupAction={threadGroups.onRowAction}
             onSnoozeThread={snoozeThread}
             onUnsnoozeThread={unsnoozeThread}
             onUnsettleThread={unsettleThread}

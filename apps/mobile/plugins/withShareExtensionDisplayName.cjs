@@ -1,6 +1,6 @@
 "use strict";
 
-// Expo replaces the empty signing team with appleTeamId. Reverse-ordered mods run after extension creation.
+// Reverse-ordered mods run after expo-sharing creates the extension target.
 
 const fs = require("fs");
 const path = require("path");
@@ -51,7 +51,8 @@ function withDisplayNamePlist(config, displayName) {
   ]);
 }
 
-function withExtensionDisplayNameBuildSetting(config, displayName) {
+function withExtensionBuildSettings(config, displayName) {
+  const teamId = config.ios?.appleTeamId;
   return withXcodeProject(config, (cfg) => {
     const objects = cfg.modResults.hash.project.objects;
     const targetEntry = findByName(objects.PBXNativeTarget, TARGET_NAME);
@@ -72,6 +73,7 @@ function withExtensionDisplayNameBuildSetting(config, displayName) {
       const buildConfiguration = buildConfigurations[reference.value];
       if (buildConfiguration?.buildSettings) {
         buildConfiguration.buildSettings.INFOPLIST_KEY_CFBundleDisplayName = `"${displayName}"`;
+        if (teamId) buildConfiguration.buildSettings.DEVELOPMENT_TEAM = teamId;
       }
     }
     return cfg;
@@ -80,8 +82,5 @@ function withExtensionDisplayNameBuildSetting(config, displayName) {
 
 module.exports = function withShareExtensionDisplayName(config) {
   const displayName = config.name;
-  return withExtensionDisplayNameBuildSetting(
-    withDisplayNamePlist(config, displayName),
-    displayName,
-  );
+  return withExtensionBuildSettings(withDisplayNamePlist(config, displayName), displayName);
 };

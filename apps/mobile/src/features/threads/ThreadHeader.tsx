@@ -2,6 +2,7 @@ import { useGT, useMessages } from "gt-react-native";
 
 import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarAction, AppBarMenu } from "../../components/ui/AppBar.types";
+import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import {
   useAdaptiveWorkspaceLayout,
   useWorkspacePaneState,
@@ -13,9 +14,15 @@ import {
   useThreadGitMenuDefinition,
   type ThreadGitControlsProps,
 } from "./ThreadGitControls";
+import { useThreadJiraMenu } from "./useThreadJiraMenu";
 
 export function ThreadHeader(props: {
   readonly title: string;
+  readonly thread?: {
+    readonly environmentId: EnvironmentId;
+    readonly projectId: ProjectId;
+    readonly id: ThreadId;
+  };
   readonly subtitle: string;
   readonly gitControls: ThreadGitControlsProps;
   readonly onReturnToThread?: () => void;
@@ -31,6 +38,7 @@ export function ThreadHeader(props: {
   const { panes } = useWorkspacePaneState();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls, m);
+  const jiraMenu = useThreadJiraMenu(props.thread ?? null);
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
@@ -44,7 +52,9 @@ export function ThreadHeader(props: {
         },
       ]
     : [];
-  const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
+  const menus = [gitMenu, terminalMenu, jiraMenu].filter(
+    (menu): menu is AppBarMenu => menu !== null,
+  );
 
   return (
     <AppBar

@@ -67,6 +67,9 @@ vi.mock("../../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,
 }));
+vi.mock("../../state/preferences", () => ({
+  saveMobilePreferences: async () => AsyncResult.success(undefined),
+}));
 vi.mock("../../state/presentation", () => ({
   connectedEnvironmentIdsAtom: "connected-environments",
 }));

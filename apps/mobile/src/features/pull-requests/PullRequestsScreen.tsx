@@ -44,6 +44,7 @@ import {
   type EnvironmentPullRequestListEntry,
   withoutScratchProjectScope,
   pullRequestProjectChoices,
+  pullRequestProjectInput,
 } from "./pullRequestList";
 import { useDebouncedValue } from "../../state/queries";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
@@ -155,15 +156,20 @@ export function PullRequestsScreen(
         .filter(
           (environment) =>
             configs.get(environment.environmentId) !== undefined &&
-            (environmentId === null || environment.environmentId === environmentId) &&
-            (!controls.projectEnvironmentId ||
-              environment.environmentId === controls.projectEnvironmentId),
+            (environmentId === null || environment.environmentId === environmentId),
         )
         .sort((left, right) => left.environmentId.localeCompare(right.environmentId))
-        .map((environment) => ({
-          environmentId: environment.environmentId,
-          input: pullRequestListInput(controls, query),
-        })),
+        .flatMap((environment) => {
+          const scope = pullRequestProjectInput(controls, environment.environmentId);
+          return scope === null
+            ? []
+            : [
+                {
+                  environmentId: environment.environmentId,
+                  input: { ...pullRequestListInput(controls, query), ...scope },
+                },
+              ];
+        }),
     [environments, environmentId, configs, controls, query],
   );
   const result = usePullRequestList(targets);

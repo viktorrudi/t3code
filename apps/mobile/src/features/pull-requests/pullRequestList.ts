@@ -24,10 +24,48 @@ export const DEFAULT_PR_LIST_CONTROLS: PullRequestListControls = {
   sort: "updated",
 };
 
+export function selectedPullRequestProjects(controls: PullRequestListControls) {
+  return (
+    controls.projects ??
+    (controls.projectId && controls.projectEnvironmentId
+      ? [{ projectId: controls.projectId, environmentId: controls.projectEnvironmentId }]
+      : [])
+  );
+}
+
+/** Null excludes this environment. An empty object reads all its projects. */
+export function pullRequestProjectInput(
+  controls: PullRequestListControls,
+  environmentId: string,
+): Pick<PullRequestListInput, "projectId" | "projectIds"> | null {
+  if (controls.projects?.length) {
+    const projectIds = controls.projects
+      .filter((project) => project.environmentId === environmentId)
+      .map((project) => ProjectId.make(project.projectId));
+    if (!projectIds.length) return null;
+    return { projectIds: [...new Set(projectIds)].sort() };
+  }
+  if (controls.projectEnvironmentId && controls.projectEnvironmentId !== environmentId) return null;
+  return controls.projectId ? { projectId: ProjectId.make(controls.projectId) } : {};
+}
+
 export function withoutScratchProjectScope(
   controls: PullRequestListControls,
   projects: readonly { id: string; environmentId: string; isScratch?: true }[],
 ): PullRequestListControls {
+  if (controls.projects?.length) {
+    const selected = controls.projects.filter(
+      (ref) =>
+        !projects.some(
+          (project) =>
+            project.isScratch &&
+            project.id === ref.projectId &&
+            project.environmentId === ref.environmentId,
+        ),
+    );
+    if (selected.length === controls.projects.length) return controls;
+    return { ...controls, projects: selected.length ? selected : undefined };
+  }
   return projects.some(
     (project) =>
       project.isScratch &&
@@ -51,19 +89,33 @@ export function pullRequestProjectChoices<
     readonly servesPullRequests: (environmentId: EnvironmentId) => boolean;
   },
 ) {
+  const selected = selectedPullRequestProjects(input.controls);
   const isSelected = (project: Project) =>
-    project.id === input.controls.projectId &&
-    project.environmentId === input.controls.projectEnvironmentId;
-  return pullRequestFilterProjects(
-    projects.filter(
-      (project) =>
-        !project.isScratch &&
-        (input.environmentId === null || project.environmentId === input.environmentId) &&
-        (input.servesPullRequests(project.environmentId) || isSelected(project)),
-    ),
-    input.environmentLabels,
-    projects.find(isSelected),
+    selected.some(
+      (ref) => ref.projectId === project.id && ref.environmentId === project.environmentId,
+    );
+  const eligible = projects.filter(
+    (project) =>
+      !project.isScratch &&
+      (input.environmentId === null || project.environmentId === input.environmentId) &&
+      (input.servesPullRequests(project.environmentId) || isSelected(project)),
   );
+  const choices = pullRequestFilterProjects(
+    [...eligible.filter(isSelected), ...eligible.filter((project) => !isSelected(project))],
+    input.environmentLabels,
+  );
+  return [
+    ...choices,
+    ...eligible
+      .filter(
+        (project) =>
+          isSelected(project) &&
+          !choices.some(
+            (choice) => choice.id === project.id && choice.environmentId === project.environmentId,
+          ),
+      )
+      .map((project) => ({ ...project, title: `${project.title} · ${project.workspaceRoot}` })),
+  ];
 }
 
 export function pullRequestListKey(
@@ -413,10 +465,17 @@ export function filterPullRequestList<
   const parsed = parsePullRequestQuery(query);
   const words = parsed.text.toLowerCase().split(/\s+/).filter(Boolean);
   const filters = { ...controls.filters, ...parsed.filters };
+  const selectedProjects = controls.projects?.length
+    ? new Set(
+        controls.projects.map(({ environmentId, projectId }) => `${environmentId}:${projectId}`),
+      )
+    : null;
   const filtered = entries.filter((entry) => {
     if (controls.state !== "all" && entry.state !== controls.state) return false;
     if (controls.projectId && entry.projectId !== controls.projectId) return false;
     if (controls.projectEnvironmentId && entry.environmentId !== controls.projectEnvironmentId)
+      return false;
+    if (selectedProjects && !selectedProjects.has(`${entry.environmentId}:${entry.projectId}`))
       return false;
     const viewerKey = entry.environmentId ? `${entry.environmentId} ${entry.host}` : entry.host;
     const viewer = viewers[viewerKey];

@@ -32,6 +32,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures";
 import { threadJumpTarget } from "../keyboard/threadKeyboardShortcuts";
+import { groupActiveThreadRows, moveThreadToGroup } from "./threadGroups";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
@@ -386,6 +387,49 @@ describe("getThreadListV2OrderedSection", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("collapses grouped inbox rows without hiding pins, other environments or shelves", () => {
+    const pinned = makeThread({ id: ThreadId.make("pin"), title: "Pinned", pinnedAt: NOW });
+    const grouped = makeThread({ id: ThreadId.make("grouped"), title: "Grouped" });
+    const other = { ...grouped, environmentId: EnvironmentId.make("other") };
+    const settled = makeThread({
+      id: ThreadId.make("settled"),
+      title: "Settled",
+      settledOverride: "settled",
+      settledAt: NOW,
+    });
+    const layout = buildThreadListV2Items({
+      threads: [pinned, grouped, other, settled],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    const rows = buildThreadListV2ListItems({
+      items: layout.items,
+      pendingTasks: [],
+      settledShelfHeaderIndex: layout.settledShelfHeaderIndex,
+      settledCount: layout.settledCount,
+    });
+    const member = (thread: EnvironmentThreadShell) => `${thread.environmentId}:${thread.id}`;
+    const groups = [
+      {
+        id: "local",
+        title: "Work",
+        collapsed: true,
+        members: [member(pinned), member(grouped), member(settled)],
+      },
+    ];
+    const shown = groupActiveThreadRows(rows, groups);
+    expect(shown.map((row) => row.key)).toEqual([
+      `v2-thread:${member(pinned)}`,
+      "v2-thread-group:local",
+      `v2-thread:${member(other)}`,
+      "v2-settled-shelf",
+      `v2-thread:${member(settled)}`,
+    ]);
+    expect(groupActiveThreadRows(rows, moveThreadToGroup(groups, member(grouped), null))).toBe(
+      rows,
+    );
+  });
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [

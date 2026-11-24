@@ -113,6 +113,72 @@ Build and run the local iOS preview app:
 vp run ios:preview
 ```
 
+### Personal iOS fork
+
+Sign in to Xcode with the Apple Developer account you want to use. Pair your iPhone
+with the Mac and enable Developer Mode. Run the release install from `apps/mobile`:
+
+```bash
+T3CODE_IOS_FORK_TEAM_ID=YOURTEAMID vp run ios:fork:release
+```
+
+Select your phone when prompted. This installs **T3 Code Personal** alongside
+the App Store app. It embeds the app bundle, so the phone can open it without
+Metro. The default bundle ID is `com.viktorrudi.t3code`. If you need a different
+ID, set `T3CODE_IOS_FORK_BUNDLE_ID` when building. Use the same ID for app
+updates so iOS preserves the fork's data. Xcode signs the app and its widget and
+share extensions with your team. The team needs access to their shared App Group.
+
+Open the fork's **Settings → Environments → Add environment** to scan a
+pairing QR from your T3 server. Each app maintains its own saved environments.
+The fork uses direct server connections. Its local installs have Expo updates
+and T3 Connect turned off.
+
+#### Private updates through TestFlight
+
+Use the same Apple team and bundle ID for every build. In App Store Connect,
+create the iOS app record for that ID, then create an internal TestFlight group
+with automatic distribution and add your Apple account. Register the matching
+App Group for the app and both extensions. Sign in to that team in Xcode.
+
+From a worktree of the reviewed fork, run these commands from `apps/mobile`.
+Replace the team ID and upstream tag with those used by the release.
+
+```bash
+export T3CODE_IOS_FORK_TEAM_ID=YOURTEAMID
+vp run ios:fork:distribution plan v0.1.11
+vp run ios:fork:distribution archive v0.1.11
+vp run ios:fork:distribution upload "/path/printed/by/archive"
+```
+
+`plan` checks the resolved Expo identity and upstream ancestry. `archive` builds
+and verifies a signed Release archive from the clean reviewed commit. It uses
+CocoaPods and regenerates the ignored `ios/` directory in that checkout. `upload`
+sends that archive to **TestFlight Internal Only** through Xcode. Xcode manages
+the Apple build number. Keep the Apple marketing version at or above the existing
+TestFlight version using `T3CODE_MOBILE_VERSION` when needed. The default release
+directory is `~/Library/Application Support/T3 Code Personal/Releases`.
+
+Keep each archive's source, stable upstream tag and commit, version, and
+distribution log together. After Xcode reports success, confirm the actual build
+number and availability to your internal group in App Store Connect. If upload
+aborts, check the exact attempt in App Store Connect before retrying. For a
+confirmed failed attempt, move that release's `upload/` log directory aside and
+retry the same archive. Record verified group availability in `testflight.json`
+beside `archive.json` with `availableAt`, `buildNumber` and, if Apple reports it,
+`expiresAt`. Record phone confirmation separately. After the first install, enable Automatic Updates on the
+app's TestFlight page. Apple expires TestFlight builds after 90 days.
+
+For a change requested in the fork's T3 project, use the current personal iOS
+release commit as the base, check affected flows and run focused tests. Have
+Claude Opus 5.5 on Claude Personal review the final diff. Archive the reviewed
+commit and continue through the authorized delivery path. Record the last
+confirmed stage and any checks on the phone. For an upstream update, reconcile
+the exact offered stable tag, keep local iOS changes, and verify compatibility
+against the intended T3 backend before delivering. Include an in-place upgrade
+check when local storage or pairing credentials change. A server migration follows
+the Mac installation procedure and runs on the host.
+
 Inspect the resolved Expo config for a variant:
 
 ```bash

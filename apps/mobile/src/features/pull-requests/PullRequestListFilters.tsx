@@ -11,7 +11,11 @@ import { environmentProjects } from "../../state/projects";
 import { environmentThreadShells } from "../../state/threads";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { buildHomeProjectScopes, sortHomeProjectScopes } from "../home/homeThreadList";
-import { DEFAULT_PR_LIST_CONTROLS, type PullRequestListControls } from "./pullRequestList";
+import {
+  DEFAULT_PR_LIST_CONTROLS,
+  selectedPullRequestProjects,
+  type PullRequestListControls,
+} from "./pullRequestList";
 import type { MessageResolver } from "../../i18n/messages";
 
 const STATES = {
@@ -141,6 +145,18 @@ export function usePullRequestListFilters(props: {
   const { value } = props;
   const m = useMessages();
   const projects = useProjectsInSidebarOrder(props.projects);
+  const selectedProjects =
+    value.projectId && !value.projectEnvironmentId && !value.projects
+      ? projects
+          .filter((project) => project.id === value.projectId)
+          .map((project) => ({
+            environmentId: project.environmentId,
+            projectId: project.id,
+          }))
+      : selectedPullRequestProjects(value);
+  const projectKey = (project: { readonly environmentId: string; readonly projectId: string }) =>
+    JSON.stringify([project.environmentId, project.projectId]);
+  const selectedProjectKeys = new Set(selectedProjects.map(projectKey));
   const selectedLabels = value.filters.labels?.flat() ?? [];
   const selectedLabelSet = new Set(selectedLabels);
   const author = value.filters.author;
@@ -183,10 +199,21 @@ export function usePullRequestListFilters(props: {
         const project = projects.find(
           (project) => JSON.stringify([project.environmentId, project.id]) === next,
         );
+        if (!project && next !== "") break;
+        const selected =
+          next === ""
+            ? []
+            : selectedProjectKeys.has(next)
+              ? selectedProjects.filter((ref) => projectKey(ref) !== next)
+              : [
+                  ...selectedProjects,
+                  { environmentId: project!.environmentId, projectId: project!.id },
+                ];
         props.onChange({
           ...value,
-          projectId: project?.id,
-          projectEnvironmentId: project?.environmentId,
+          projectId: undefined,
+          projectEnvironmentId: undefined,
+          projects: selected.length ? selected : undefined,
         });
         break;
       }
@@ -252,7 +279,7 @@ export function usePullRequestListFilters(props: {
     Number(Boolean(value.filters.draft)) +
     Number(Boolean(value.filters.review)) +
     Number(Boolean(value.filters.checks)) +
-    Number(Boolean(value.projectId));
+    Number(selectedProjects.length > 0 || Boolean(value.projectId));
   const more: MenuProps["actions"] = [
     {
       id: "drafts",
@@ -278,21 +305,26 @@ export function usePullRequestListFilters(props: {
     {
       id: "projects",
       title:
-        projects.find(
-          (project) =>
-            project.id === value.projectId && project.environmentId === value.projectEnvironmentId,
-        )?.title ?? m(msg("Project", { $context: "filter menu" })),
-      subactions: choices(
-        "project",
-        Object.fromEntries([
-          ["", m(msg("All projects"))],
-          ...projects.map((project) => [
-            JSON.stringify([project.environmentId, project.id]),
-            project.title,
-          ]),
-        ]),
-        value.projectId ? JSON.stringify([value.projectEnvironmentId, value.projectId]) : "",
-      ),
+        (selectedProjects.length === 1
+          ? projects.find((project) =>
+              selectedProjectKeys.has(JSON.stringify([project.environmentId, project.id])),
+            )?.title
+          : undefined) ?? m(msg("Projects")),
+      subactions: [
+        {
+          id: id("project", ""),
+          title: m(msg("All projects")),
+          state: selectedProjects.length === 0 && !value.projectId ? "on" : "off",
+        },
+        ...projects.map((project) => {
+          const key = JSON.stringify([project.environmentId, project.id]);
+          return {
+            id: id("project", key),
+            title: project.title,
+            state: selectedProjectKeys.has(key) ? ("on" as const) : ("off" as const),
+          };
+        }),
+      ],
     },
     {
       id: "sort",

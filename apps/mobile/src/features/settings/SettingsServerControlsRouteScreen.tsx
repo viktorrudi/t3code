@@ -44,6 +44,7 @@ import {
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
+import { EventSnoozeSettings } from "./components/EventSnoozeSettings";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
@@ -408,6 +409,20 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   />
                 </SettingsSection>
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
+                {projectSelected
+                  ? null
+                  : selectedTargets
+                      .filter(
+                        (environment) =>
+                          environment.serverConfig.environment.capabilities.threadEventSnooze ===
+                          true,
+                      )
+                      .map((environment) => (
+                        <EventSnoozeSettings
+                          key={environment.environmentId}
+                          environment={environment}
+                        />
+                      ))}
               </>
             ) : null}
 

@@ -1,7 +1,5 @@
-import {
-  collectComposerModelMentions,
-  type ComposerModelMentionOccurrence,
-} from "@t3tools/client-runtime/composer-model-mentions";
+import type { ComposerModelMentionOccurrence } from "@t3tools/client-runtime/composer-model-mentions";
+import { collectMobileModelMentions } from "./modelMentionText";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
@@ -197,7 +195,7 @@ export function collectComposerModelTokens(
   knownModels: { has(source: string): boolean },
   preserveTrailingFrom: ReadonlyArray<ComposerModelMentionOccurrence> = [],
 ): ReadonlyArray<ComposerModelMentionOccurrence> {
-  return collectComposerModelMentions(text).filter(
+  return collectMobileModelMentions(text).filter(
     (mention) =>
       knownModels.has(mention.source) &&
       (/\s/u.test(text[mention.end] ?? "") ||

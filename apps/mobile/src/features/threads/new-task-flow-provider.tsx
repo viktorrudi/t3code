@@ -32,6 +32,8 @@ import type { DraftComposerAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
   buildModelOptions,
+  modelConfigForNewProject,
+  selectionForNewProject,
   groupByProvider,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
@@ -421,6 +423,10 @@ export function NewTaskFlowProvider(
     projectDefaults.serverConfig,
     workspaceCwd,
   );
+  const projectTitle = selectedProject?.title ?? null;
+  const modelConfig = modelConfigForNewProject(selectedEnvironmentServerConfig, projectTitle);
+  const inProject = (selection: ModelSelection | null) =>
+    selectionForNewProject(selection, selectedEnvironmentServerConfig, projectTitle);
   // Keep the user's explicit choice separate from the resolved display value:
   // only the explicit flag is ever written back to the draft, so the resolved
   // value keeps tracking the server setting when the config loads late.
@@ -439,21 +445,21 @@ export function NewTaskFlowProvider(
   // cannot switch the user's model.
   const draftModelSelection = resolveSelectableModelSelection(
     selectedEnvironmentServerConfig,
-    selectedProjectDraft.modelSelection ?? null,
+    inProject(selectedProjectDraft.modelSelection ?? null),
     selectedProject?.id ?? null,
   );
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
-    projectSettings.settings.defaultModelSelection,
+    inProject(projectSettings.settings.defaultModelSelection),
     selectedProject?.id ?? null,
   );
   const stickyModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
-    storedStickyModelSelection,
+    inProject(storedStickyModelSelection),
     selectedProject?.id ?? null,
   );
   const modelOptions = buildModelOptions(
-    selectedEnvironmentServerConfig,
+    modelConfig,
     draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
     undefined,
     selectedProject?.id ?? null,
@@ -469,8 +475,10 @@ export function NewTaskFlowProvider(
     defaultSelection: selectedDefaultModel,
     explicitSelection:
       draftModelSelection ?? (projectDefaultModelSelection ? null : stickyModelSelection),
-    fallbackSelection: selectedEnvironmentServerConfig?.settings.fallbackModelSelection ?? null,
-    providers: selectedEnvironmentServerConfig?.providers ?? [],
+    fallbackSelection: inProject(
+      selectedEnvironmentServerConfig?.settings.fallbackModelSelection ?? null,
+    ),
+    providers: modelConfig?.providers ?? [],
     ...(selectedEnvironmentServerConfig
       ? { settings: selectedEnvironmentServerConfig.settings }
       : {}),

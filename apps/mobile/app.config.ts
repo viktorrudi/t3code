@@ -12,18 +12,34 @@ process.env.EXPO_NO_TYPESCRIPT_SETUP = "1";
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
+const isIosFork = repoEnv.T3CODE_IOS_FORK === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
 
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
+const forkBundleId = repoEnv.T3CODE_IOS_FORK_BUNDLE_ID?.trim() || "com.viktorrudi.t3code";
+const forkTeamId = repoEnv.T3CODE_IOS_FORK_TEAM_ID?.trim();
+
+if (
+  isIosFork &&
+  (isIosPersonalTeamBuild ||
+    !IOS_BUNDLE_IDENTIFIER_PATTERN.test(forkBundleId) ||
+    /^com\.t3tools\.t3code(?:\.|$)/i.test(forkBundleId) ||
+    (forkTeamId !== undefined && !/^[A-Z0-9]{10}$/.test(forkTeamId)))
+) {
+  throw new Error(
+    "Use a separate reverse-DNS bundle ID and a valid Apple team ID for the iOS fork. Disable Personal Team mode.",
+  );
+}
 
 // Compiled into the native project. Without a relay, Observe's native side could dispatch to
 // Expo's own ingest before observe.ts turns it off; `.invalid` never resolves (RFC 6761).
-const observeEndpointUrl = repoEnv.T3CODE_RELAY_URL?.trim()
-  ? new URL("/v1/mobile/observe", repoEnv.T3CODE_RELAY_URL.trim()).toString()
-  : "https://observe.invalid";
+const observeEndpointUrl =
+  !isIosFork && repoEnv.T3CODE_RELAY_URL?.trim()
+    ? new URL("/v1/mobile/observe", repoEnv.T3CODE_RELAY_URL.trim()).toString()
+    : "https://observe.invalid";
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
 const androidAdaptiveForeground = "./assets/android-icon-foreground.png";
@@ -120,9 +136,20 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 const variant = VARIANT_CONFIG[APP_VARIANT];
 // Copied thread links open the app. app.t3.codes/.well-known lists every variant's identifiers.
 const HOSTED_APP_HOST = "app.t3.codes";
-const iosBundleIdentifier = isIosPersonalTeamBuild
-  ? personalTeamBundleIdentifier!
-  : variant.iosBundleIdentifier;
+const forkSuffix =
+  APP_VARIANT === "development" ? "dev" : APP_VARIANT === "preview" ? "preview" : "";
+const iosBundleIdentifier = isIosFork
+  ? forkSuffix
+    ? `${forkBundleId}.${forkSuffix}`
+    : forkBundleId
+  : personalTeamBundleIdentifier && isIosPersonalTeamBuild
+    ? personalTeamBundleIdentifier
+    : variant.iosBundleIdentifier;
+const appName = isIosFork
+  ? `T3 Code Personal${forkSuffix === "dev" ? " Dev" : forkSuffix ? " Preview" : ""}`
+  : variant.appName;
+const scheme = isIosFork ? `t3code-personal${forkSuffix}` : variant.scheme;
+const iosAssets = isIosFork && APP_VARIANT === "production" ? PREVIEW_ASSETS : variant.assets;
 
 const dmSansFonts = {
   regular: "@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",
@@ -130,12 +157,25 @@ const dmSansFonts = {
   bold: "@expo-google-fonts/dm-sans/700Bold/DMSans_700Bold.ttf",
 } as const;
 
+const clerkPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
+  "@clerk/expo",
+  { theme: "./clerk-theme.json", appleSignIn: !isIosPersonalTeamBuild },
+];
+const notificationsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
+  "expo-notifications",
+  {
+    icon: variant.assets.androidNotificationIcon,
+    color: variant.assets.androidNotificationColor,
+    mode: APP_VARIANT === "development" ? "development" : "production",
+  },
+];
+
 const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   "expo-widgets",
   {
     bundleIdentifier: `${iosBundleIdentifier}.widgets`,
     groupIdentifier: `group.${iosBundleIdentifier}`,
-    enablePushNotifications: true,
+    enablePushNotifications: !isIosFork,
     // Frequent updates need the iOS entitlement to avoid early throttling.
     frequentUpdates: true,
     enableAndroid: true,
@@ -233,38 +273,50 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
 // Match iOS PostScript names on Android so RN and the native composer share fonts before runtime loading.
 
 const config: ExpoConfig = {
-  name: variant.appName,
-  slug: "t3-code",
-  platforms: ["ios", "android"],
-  scheme: variant.scheme,
+  name: appName,
+  slug: isIosFork ? "t3-code-personal" : "t3-code",
+  platforms: isIosFork ? ["ios"] : ["ios", "android"],
+  scheme,
   version: repoEnv.T3CODE_MOBILE_VERSION ?? "2.3.0",
   runtimeVersion: {
     // Skip costly fingerprinting on dev launches; preview and production OTAs require matching native projects.
     policy: runtimeVersionPolicy,
   },
   orientation: "portrait",
-  icon: variant.assets.appIcon,
+  icon: iosAssets.appIcon,
   userInterfaceStyle: "automatic",
-  updates: {
-    enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    checkAutomatically: "ON_LOAD",
-    fallbackToCacheTimeout: 0,
-  },
+  updates: isIosFork
+    ? { enabled: false }
+    : {
+        enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
+        url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+        checkAutomatically: "ON_LOAD",
+        fallbackToCacheTimeout: 0,
+      },
   ios: {
-    icon: variant.assets.iosIcon,
+    icon: iosAssets.iosIcon,
     supportsTablet: true,
     requireFullScreen: process.env.T3_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
     // Avoid Personal Team fallback: it cannot sign App Groups, Apple sign-in or push entitlements.
-    appleTeamId: "ARK85ZXQ4Z",
-    associatedDomains: [
-      `applinks:${variant.relyingParty}`,
-      `webcredentials:${variant.relyingParty}`,
-      `applinks:${HOSTED_APP_HOST}`,
-    ],
+    ...(isIosFork
+      ? forkTeamId
+        ? { appleTeamId: forkTeamId }
+        : {}
+      : { appleTeamId: "ARK85ZXQ4Z" }),
+    ...(isIosFork
+      ? {}
+      : {
+          associatedDomains: [
+            `applinks:${variant.relyingParty}`,
+            `webcredentials:${variant.relyingParty}`,
+            `applinks:${HOSTED_APP_HOST}`,
+          ],
+        }),
     entitlements: {
-      "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
+      "keychain-access-groups": [
+        `$(AppIdentifierPrefix)${isIosFork ? iosBundleIdentifier : variant.iosBundleIdentifier}`,
+      ],
     },
     infoPlist: {
       UISupportedInterfaceOrientations: [
@@ -357,16 +409,9 @@ const config: ExpoConfig = {
     ...(isIosPersonalTeamBuild
       ? [sharingPlugin]
       : ["./plugins/withShareExtensionDisplayName.cjs", sharingPlugin]),
-    [
-      "expo-notifications",
-      {
-        icon: variant.assets.androidNotificationIcon,
-        color: variant.assets.androidNotificationColor,
-        mode: APP_VARIANT === "development" ? "development" : "production",
-      },
-    ],
+    ...(isIosFork ? [] : [notificationsPlugin]),
     // Gate Clerk here: withoutIosPersonalTeamCapabilities runs too early to strip its entitlement.
-    ["@clerk/expo", { theme: "./clerk-theme.json", appleSignIn: !isIosPersonalTeamBuild }],
+    ...(isIosFork ? [] : [clerkPlugin]),
     "expo-web-browser",
     [
       "expo-quick-actions",
@@ -411,12 +456,12 @@ const config: ExpoConfig = {
     [
       "expo-splash-screen",
       {
-        image: variant.assets.splashIcon,
+        image: iosAssets.splashIcon,
         resizeMode: "contain",
         backgroundColor: "#ffffff",
         imageWidth: 220,
         dark: {
-          image: variant.assets.splashIcon,
+          image: iosAssets.splashIcon,
           backgroundColor: "#0a0a0a",
         },
         android: {
@@ -462,37 +507,52 @@ const config: ExpoConfig = {
     // MainActivity mods run in reverse order; extend the tablet-orientation override.
     "./plugins/withAndroidWindowDisplayMetrics.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
-    ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
+    ...(isIosPersonalTeamBuild || isIosFork
+      ? [
+          ["./plugins/withoutIosPersonalTeamCapabilities.cjs", { keepAppGroups: isIosFork }] as [
+            string,
+            object,
+          ],
+        ]
+      : []),
   ],
   extra: {
     appVariant: APP_VARIANT,
+    iosFork: isIosFork,
     secretsFeatureEnabled: ["1", "true"].includes(
       process.env.T3CODE_FEATURE_SECRETS?.trim().toLowerCase() ?? "",
     ),
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
     relay: {
-      url: repoEnv.T3CODE_RELAY_URL ?? null,
+      url: isIosFork ? null : (repoEnv.T3CODE_RELAY_URL ?? null),
     },
     clerk: {
-      publishableKey: repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
-      jwtTemplate: repoEnv.EXPO_PUBLIC_CLERK_JWT_TEMPLATE ?? null,
+      publishableKey: isIosFork ? null : (repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null),
+      jwtTemplate: isIosFork ? null : (repoEnv.EXPO_PUBLIC_CLERK_JWT_TEMPLATE ?? null),
     },
     // Clerk reads these exact names at prebuild. Omit unset values: manifest null becomes truthy {}.
-    EXPO_PUBLIC_CLERK_GOOGLE_WEB_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_WEB_CLIENT_ID,
-    EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID,
-    EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID,
-    EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME,
+    ...(!isIosFork
+      ? {
+          EXPO_PUBLIC_CLERK_GOOGLE_WEB_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_WEB_CLIENT_ID,
+          EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID,
+          EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID:
+            repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID,
+          EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME,
+        }
+      : {}),
     observability: {
-      tracesUrl: repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces",
-      tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
-      tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
+      tracesUrl: isIosFork
+        ? null
+        : (repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces"),
+      tracesDataset: isIosFork ? null : (repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null),
+      tracesToken: isIosFork ? null : (repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null),
     },
     eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+      ...(!isIosFork ? { projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454" } : {}),
       observe: { endpointUrl: observeEndpointUrl },
     },
   },
-  owner: "pingdotgg",
+  ...(!isIosFork ? { owner: "pingdotgg" } : {}),
   experiments: {
     // Metro only runs babel-plugin-react-compiler when this is set; see src/reactCompilerCoverage.test.ts.
     reactCompiler: true,

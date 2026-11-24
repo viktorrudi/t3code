@@ -55,6 +55,10 @@
       "types": "./src/modelSearch.ts",
       "default": "./src/modelSearch.ts"
     },
+    "./project-model-routing": {
+      "types": "./src/projectModelRouting.ts",
+      "default": "./src/projectModelRouting.ts"
+    },
     "./image-attachment-size": {
       "types": "./src/imageAttachmentSize.ts",
       "default": "./src/imageAttachmentSize.ts"

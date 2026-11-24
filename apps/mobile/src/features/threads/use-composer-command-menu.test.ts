@@ -162,6 +162,16 @@ describe("mobile model mentions", () => {
       ["model:opencode:traex/gpt-6.1", "OpenCode · Traex"],
       ["model:traex:gpt-6.1", "Traex"],
     ]);
+    const item = items.find((candidate) => candidate.id === "model:traex:gpt-6.1");
+    if (!item) throw new Error("Expected the Traex reference");
+    expect(
+      resolveComposerCommandSelection({
+        draftMessage: "Review with @gpt",
+        trigger: { rangeStart: 12, rangeEnd: 16 },
+        item,
+        delegateModelMentions: true,
+      }).text,
+    ).toBe("Review with model:traex/gpt-6.1 as subagent ");
   });
 
   it.each([

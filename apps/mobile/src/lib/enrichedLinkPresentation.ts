@@ -8,6 +8,7 @@ import {
   UNAVAILABLE_CONTEXT_CHIP_PRESENTATION,
 } from "./composerChipPresentation";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
+import { MODEL_DELEGATION_SUFFIX } from "./modelMentionText";
 import type {
   SelectableMarkdownModel,
   SelectableMarkdownSkill,
@@ -139,32 +140,35 @@ export function buildEnrichedModelReferences(
   sources?: ReadonlySet<string>,
 ): ReadonlyArray<SelectableMarkdownModel> {
   return providers.flatMap((provider) =>
-    provider.models
-      .filter(
-        (model) =>
-          !sources || sources.has(formatComposerModelMention(provider.instanceId, model.slug)),
-      )
-      .map((model) => {
-        const qualifier = model.subProvider?.trim();
-        const label = qualifier
-          ? model.name
-              .replace(
-                new RegExp(
-                  `^${qualifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s*[.:/-]\\s*|\\s+)`,
-                  "iu",
-                ),
-                "",
-              )
-              .trim() || model.name
-          : model.name;
-        return {
-          source: formatComposerModelMention(provider.instanceId, model.slug),
-          label,
-          providerLabel: qualifier || provider.displayName || provider.instanceId,
-          driver: provider.driver,
-          iconUrl: provider.iconUrl,
-        };
-      }),
+    provider.models.flatMap((model) => {
+      const source = formatComposerModelMention(provider.instanceId, model.slug);
+      const delegationSource = source + MODEL_DELEGATION_SUFFIX;
+      const present = !sources || sources.has(source);
+      const hasDelegation = sources?.has(delegationSource);
+      if (!present && !hasDelegation) return [];
+      const qualifier = model.subProvider?.trim();
+      const label = qualifier
+        ? model.name
+            .replace(
+              new RegExp(
+                `^${qualifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s*[.:/-]\\s*|\\s+)`,
+                "iu",
+              ),
+              "",
+            )
+            .trim() || model.name
+        : model.name;
+      const presentation = {
+        label,
+        providerLabel: qualifier || provider.displayName || provider.instanceId,
+        driver: provider.driver,
+        iconUrl: provider.iconUrl,
+      };
+      return [
+        ...(present ? [{ ...presentation, source }] : []),
+        ...(hasDelegation ? [{ ...presentation, source: delegationSource }] : []),
+      ];
+    }),
   );
 }
 

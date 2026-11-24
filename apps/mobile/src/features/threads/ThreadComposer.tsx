@@ -5,6 +5,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
+import Constants from "expo-constants";
 import { useAtomValue } from "@effect/atom-react";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-runtime/text-paste";
@@ -89,6 +90,7 @@ import {
 import { composerAttachmentUploadKey } from "../../lib/composerAttachmentUploadQueue";
 import {
   buildModelOptions,
+  restrictProjectModelOptions,
   isModelSelectionUnavailable,
   serverConfigForCwd,
 } from "../../lib/modelOptions";
@@ -414,11 +416,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
 
   const mentionableEnvironments = useMentionableEnvironments();
   // Mentions name any model for the agent, so they aren't limited to models this thread can switch to.
-  const mentionModelOptions = buildModelOptions(
+  const mentionModelOptions = restrictProjectModelOptions(
+    buildModelOptions(
+      props.serverConfig,
+      currentModelSelection,
+      undefined,
+      props.selectedThread.projectId,
+    ),
     props.serverConfig,
-    currentModelSelection,
-    undefined,
-    props.selectedThread.projectId,
+    project?.title ?? null,
   );
   const composerMenu = useComposerCommandMenu({
     draftMessage: draftMessage,
@@ -444,6 +450,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onOpenModelPicker: settingsSheetPresentation.open,
     modelOptions: mentionModelOptions,
     modelProviders: props.serverConfig?.providers,
+    delegateModelMentions: Constants.expoConfig?.extra?.iosFork === true,
     ...(props.onFreshSession === undefined ? {} : { onFreshSession: props.onFreshSession }),
     offersSideChat: props.offersSideChat === true,
   });

@@ -24,6 +24,51 @@ import {
 } from "@t3tools/shared/model";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
 import { resolveProvidersForCwd } from "@t3tools/client-runtime/providerSkills";
+import {
+  hasProjectModelRouting,
+  projectAllowsModelInstance,
+} from "@t3tools/client-runtime/project-model-routing";
+
+export function modelConfigForNewProject<C extends T3ServerConfig | null | undefined>(
+  config: C,
+  projectTitle: string | null,
+): C {
+  if (!config || !hasProjectModelRouting(config.providers)) return config;
+  return {
+    ...config,
+    providers: config.providers.filter(({ instanceId }) =>
+      projectAllowsModelInstance(projectTitle, instanceId),
+    ),
+  };
+}
+
+export function selectionForNewProject(
+  selection: ModelSelection | null,
+  config: T3ServerConfig | null | undefined,
+  projectTitle: string | null,
+): ModelSelection | null {
+  return selection &&
+    config &&
+    hasProjectModelRouting(config.providers) &&
+    !projectAllowsModelInstance(projectTitle, selection.instanceId)
+    ? null
+    : selection;
+}
+
+export function restrictProjectModelOptions(
+  options: ReadonlyArray<ModelOption>,
+  config: T3ServerConfig | null | undefined,
+  projectTitle: string | null,
+  preservedSelection?: ModelSelection | null,
+): ReadonlyArray<ModelOption> {
+  if (!config || !hasProjectModelRouting(config.providers)) return options;
+  return options.filter(
+    ({ selection }) =>
+      (selection.instanceId === preservedSelection?.instanceId &&
+        selection.model === preservedSelection.model) ||
+      projectAllowsModelInstance(projectTitle, selection.instanceId),
+  );
+}
 
 /** The contracts `disallowedProviderMessage` English, as translatable sentences. */
 function disallowedProviderText(organization: string | undefined, label: string): string {
