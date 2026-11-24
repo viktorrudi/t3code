@@ -46,6 +46,7 @@ export const IssueListRow = memo(function IssueListRow(props: {
           status.label,
           gt("by {author}", { author: item.author?.login ?? gt("unknown author") }),
           item.labels.length ? item.labels.map((label) => label.name).join(", ") : null,
+          item.jiraWork?.deploy?.label,
           item.commentCount
             ? gt("{count, plural, other {{count} comments}}", {
                 count: item.commentCount,
@@ -92,6 +93,18 @@ export const IssueListRow = memo(function IssueListRow(props: {
           >
             {item.title}
           </Text>
+          {item.jiraWork && (item.jiraWork.release !== null || item.jiraWork.deploy) ? (
+            <Text className={cn("text-2xs", muted)} numberOfLines={1}>
+              {[
+                item.jiraWork.release === null
+                  ? null
+                  : gt("Release {release}", { release: item.jiraWork.release }),
+                item.jiraWork.deploy?.label,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Text>
+          ) : null}
           {item.labels.length > 0 || item.commentCount > 0 ? (
             <View className="flex-row items-center gap-1.5">
               <View className="min-w-0 flex-1 flex-row items-center gap-1">

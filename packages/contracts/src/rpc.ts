@@ -109,6 +109,7 @@ import {
   JiraIssueError,
   JiraIssueInput,
   JiraIssueTransitionInput,
+  JiraTicketLinkInput,
   ThreadTicketAnnotations,
 } from "./threadTickets.ts";
 import {
@@ -474,6 +475,7 @@ export const WS_METHODS = {
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
   threadGroupsGenerateTitle: "threadGroups.generateTitle",
+  threadTicketsSetLink: "threadTickets.setLink",
   threadTicketsSubscribe: "threadTickets.subscribe",
   threadTicketsSetDeployTarget: "threadTickets.setDeployTarget",
   threadTicketsAssignRelease: "threadTickets.assignRelease",
@@ -1637,6 +1639,12 @@ const WsThreadGroupsGenerateTitleRpc = Rpc.make(WS_METHODS.threadGroupsGenerateT
   error: Schema.Union([ThreadGroupTitleError, EnvironmentAuthorizationError]),
 });
 
+const WsThreadTicketsSetLinkRpc = Rpc.make(WS_METHODS.threadTicketsSetLink, {
+  payload: JiraTicketLinkInput,
+  success: Schema.Struct({ annotationsRefreshed: Schema.Boolean }),
+  error: Schema.Union([JiraIssueError, EnvironmentAuthorizationError]),
+});
+
 const WsThreadTicketsSubscribeRpc = Rpc.make(WS_METHODS.threadTicketsSubscribe, {
   payload: Schema.Struct({}),
   success: ThreadTicketAnnotations,
@@ -2464,6 +2472,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
   WsThreadGroupsGenerateTitleRpc,
+  WsThreadTicketsSetLinkRpc,
   WsThreadTicketsSubscribeRpc,
   WsThreadTicketsSetDeployTargetRpc,
   WsThreadTicketsAssignReleaseRpc,

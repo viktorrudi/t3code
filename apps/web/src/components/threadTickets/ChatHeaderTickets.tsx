@@ -21,6 +21,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { JiraTicketPicker } from "./JiraTicketPicker";
 import { ThreadTicketChips } from "./ThreadTicketChips";
 
 const STATUS_BADGE_VARIANT = {
@@ -151,9 +152,9 @@ export function ChatHeaderTickets({
   threadId: ThreadId;
 }) {
   const tickets = useThreadTickets(environmentId, threadId);
-  if (tickets.length === 0) return null;
   return (
-    <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+    <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground empty:hidden">
+      <JiraTicketPicker environmentId={environmentId} threadId={threadId} tickets={tickets} />
       {tickets.map((ticket) => (
         <div key={ticket.key} className="flex shrink-0 items-center gap-1.5">
           <ThreadTicketChips tickets={[ticket]} environmentId={environmentId} />

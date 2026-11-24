@@ -68,6 +68,7 @@ import {
 } from "../pullRequest/pullRequestPresentation";
 import { IssueCommentComposer } from "./IssueCommentComposer";
 import { IssueDetailGhost } from "./IssueDetailGhost";
+import { JiraIssueDetail } from "./JiraIssueDetail";
 import { IssueThreadLinks } from "./IssueThreadLinks";
 import { ReactionBar } from "../pullRequest/PullRequestReactions";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
@@ -424,6 +425,17 @@ export function IssueDetailPanel({
       );
     }
     return <IssueDetailGhost seed={listEntry} />;
+  }
+
+  if (detail.tracker === "jira") {
+    return (
+      <JiraIssueDetail
+        environmentId={environmentId}
+        issue={detail}
+        reference={reference}
+        onRefresh={detailQuery.refresh}
+      />
+    );
   }
 
   const timeline: ReadonlyArray<TimelineItem> = [

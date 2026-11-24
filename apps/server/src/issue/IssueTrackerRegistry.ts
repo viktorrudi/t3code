@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { FetchHttpClient } from "effect/http";
 import type { IssueTrackerKind } from "@t3tools/contracts";
 import * as LinearDriver from "@t3tools/issue-tracker-linear/server/driver";
 import {
@@ -9,6 +10,9 @@ import {
   type StandaloneIssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
+import * as JiraClient from "../personal/JiraClient.ts";
+import * as JiraIssueTracker from "../personal/JiraIssueTracker.ts";
+import { JIRA_HOST } from "../personal/SensoneoJira.ts";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import * as IssueTrackerHostLive from "./IssueTrackerHostLive.ts";
 
@@ -17,6 +21,7 @@ export class IssueTrackerRegistry extends Context.Service<
   {
     /** Null for a kind with no implementation, which the service reports as unsupported. */
     readonly get: (kind: IssueTrackerKind) => IssueTrackerApi | null;
+    readonly sensoneoJiraConfigured?: Effect.Effect<boolean>;
     readonly kinds: ReadonlyArray<IssueTrackerKind>;
     /** The trackers a user connects with a credential of their own, in registration order. */
     readonly standalone: ReadonlyArray<StandaloneIssueTrackerApi>;
@@ -41,9 +46,26 @@ const STANDALONE_TRACKERS = [LinearDriver.make];
 const make = Effect.gen(function* () {
   const drivers = yield* BuiltInDrivers.SourceControlDrivers;
   const standalone = yield* Effect.all(STANDALONE_TRACKERS);
-  return fromTrackers([...drivers.flatMap(({ instance }) => instance.issues ?? []), ...standalone]);
+  const jiraClient = yield* JiraClient.JiraClient;
+  const jira = yield* JiraIssueTracker.make;
+  return {
+    ...fromTrackers([
+      ...drivers.flatMap(({ instance }) => instance.issues ?? []),
+      ...standalone,
+      jira,
+    ]),
+    sensoneoJiraConfigured: jiraClient.configuredHost.pipe(
+      Effect.map((host) => host === JIRA_HOST),
+    ),
+  };
 });
 
 export const layer = Layer.effect(IssueTrackerRegistry, make).pipe(
-  Layer.provide(Layer.merge(BuiltInDrivers.layer, IssueTrackerHostLive.layer)),
+  Layer.provide(
+    Layer.mergeAll(
+      BuiltInDrivers.layer,
+      IssueTrackerHostLive.layer,
+      JiraClient.layer.pipe(Layer.provide(FetchHttpClient.layer)),
+    ),
+  ),
 );

@@ -1,6 +1,9 @@
 import * as Schema from "effect/Schema";
+import { ThreadId } from "./baseSchemas.ts";
 
 /** Written by an external script to `<state dir>/thread-annotations.json`; T3 only displays it. */
+export const SENSONEO_JIRA_HOST = "sensoneosk.atlassian.net";
+
 export const THREAD_ANNOTATIONS_FILE = "thread-annotations.json";
 
 export const ThreadTicketDeployTone = Schema.Literals(["success", "info", "warning", "muted"]);
@@ -50,6 +53,29 @@ export const ThreadTicketDeploy = Schema.Struct({
 export type ThreadTicketDeploy = typeof ThreadTicketDeploy.Type;
 
 export const JiraIssueKey = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9]{1,15}-\d{1,9}$/u));
+
+export const JiraTicketLinkInput = Schema.Struct({
+  threadId: ThreadId,
+  key: JiraIssueKey,
+  linked: Schema.Boolean,
+});
+export type JiraTicketLinkInput = typeof JiraTicketLinkInput.Type;
+
+export const JiraWorkPullRequest = Schema.Struct({
+  url: Schema.String,
+  number: Schema.optional(Schema.Number),
+  title: Schema.optional(Schema.String),
+});
+export type JiraWorkPullRequest = typeof JiraWorkPullRequest.Type;
+
+export const JiraTicketWork = Schema.Struct({
+  release: Schema.NullOr(Schema.String),
+  deploy: Schema.optional(ThreadTicketDeploy),
+  fixVersions: Schema.Array(Schema.String),
+  linkedChatCount: Schema.Number,
+  pullRequests: Schema.Array(JiraWorkPullRequest),
+});
+export type JiraTicketWork = typeof JiraTicketWork.Type;
 
 export const ThreadTicket = Schema.Struct({
   key: JiraIssueKey,

@@ -1,4 +1,4 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon } from "lucide-react";
 import { T, useGT } from "gt-react";
 import { useState } from "react";
@@ -14,11 +14,13 @@ type ThreadShell = ReturnType<typeof useVisibleThreadShells>[number];
 export function ThreadLinkPicker({
   environmentId,
   pending,
+  projectIds,
   isLinked,
   onSelect,
 }: {
   environmentId: EnvironmentId;
   pending: boolean;
+  projectIds?: readonly ProjectId[];
   isLinked: (thread: ThreadShell) => boolean;
   onSelect: (threadId: ThreadId) => void;
 }) {
@@ -38,6 +40,7 @@ export function ThreadLinkPicker({
     .filter(
       (thread) =>
         thread.environmentId === environmentId &&
+        (projectIds === undefined || projectIds.includes(thread.projectId)) &&
         thread.archivedAt === null &&
         `${thread.title} ${projectNames.get(thread.projectId) ?? ""}`
           .toLocaleLowerCase()

@@ -10,15 +10,16 @@ import {
 } from "@t3tools/client-runtime/issue-list";
 import { issueTrackerDetailText } from "@t3tools/client-runtime/state/issue-trackers";
 import { issueEntryKey } from "@t3tools/client-runtime/state/issues";
-import type {
-  EnvironmentId,
-  IssueInvolvement,
-  IssueListInput,
-  IssueListSort,
-  IssueListState,
-  IssueTrackerKind,
-  IssueTrackerSummary,
-  ProjectId,
+import {
+  SENSONEO_JIRA_HOST,
+  type EnvironmentId,
+  type IssueInvolvement,
+  type IssueListInput,
+  type IssueListSort,
+  type IssueListState,
+  type IssueTrackerKind,
+  type IssueTrackerSummary,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
@@ -741,6 +742,52 @@ export function IssuesPage() {
                   hiddenProjects={hiddenProjects}
                   onHiddenProjects={(hideProjects) => updateSearch({ hideProjects })}
                 />
+                {[...held.values()].some((page) =>
+                  page.answer.trackers.some((tracker) => tracker.tracker === "jira"),
+                ) ? (
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      size="xs"
+                      variant={
+                        search.host === SENSONEO_JIRA_HOST &&
+                        search.who === "assigned" &&
+                        search.status === "open"
+                          ? "secondary"
+                          : "ghost"
+                      }
+                      onClick={() =>
+                        updateSearch({
+                          host: SENSONEO_JIRA_HOST,
+                          who: "assigned",
+                          status: "open",
+                          assignee: undefined,
+                          label: undefined,
+                          q: undefined,
+                        })
+                      }
+                    >
+                      <T>My Jira tickets</T>
+                    </Button>
+                    {search.host === SENSONEO_JIRA_HOST ? (
+                      <Button
+                        size="xs"
+                        variant={
+                          search.who === "all" && search.status === "all" ? "secondary" : "ghost"
+                        }
+                        onClick={() =>
+                          updateSearch({
+                            who: "all",
+                            status: "all",
+                            assignee: undefined,
+                            label: undefined,
+                          })
+                        }
+                      >
+                        <T>Search Jira</T>
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
                 <SavedViewsMenu
                   kind={ISSUE_SAVED_VIEWS}
                   preferences={search}

@@ -20,9 +20,11 @@ export class JiraNotConfiguredError extends Schema.TaggedError<JiraNotConfigured
 export class JiraClient extends Context.Service<
   JiraClient,
   {
+    readonly configuredHost: Effect.Effect<string | null>;
     /** Sends `request` (a path below the site origin, e.g. `/rest/api/3/myself`) with credentials. */
     readonly execute: (
       request: HttpClientRequest.HttpClientRequest,
+      expectedHost?: string,
     ) => Effect.Effect<
       { readonly status: number; readonly body: unknown; readonly origin: string },
       JiraNotConfiguredError | HttpClientError.HttpClientError
@@ -37,7 +39,7 @@ const make = Effect.gen(function* () {
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const credentials = Effect.fn("JiraClient.credentials")(function* () {
+  const configuration = Effect.fn("JiraClient.configuration")(function* () {
     const { jiraSnooze: config } = yield* settings.getSettings.pipe(
       Effect.mapError((cause) => new JiraNotConfiguredError({ cause })),
     );
@@ -52,10 +54,19 @@ const make = Effect.gen(function* () {
       typeof config.apiToken !== "string" ||
       !config.apiToken ||
       !config.email
-    )
+    ) {
       return yield* new JiraNotConfiguredError({});
+    }
+    return { origin, token: config.apiToken, email: config.email };
+  });
+
+  const credentials = Effect.fn("JiraClient.credentials")(function* (expectedHost?: string) {
+    const config = yield* configuration();
+    if (expectedHost !== undefined && config.origin.host !== expectedHost) {
+      return yield* new JiraNotConfiguredError({});
+    }
     const token =
-      config.apiToken === KEYCHAIN_TOKEN
+      config.token === KEYCHAIN_TOKEN
         ? (yield* spawner
             .string(
               ChildProcess.make(
@@ -65,18 +76,19 @@ const make = Effect.gen(function* () {
               ),
             )
             .pipe(Effect.mapError((cause) => new JiraNotConfiguredError({ cause })))).trim()
-        : config.apiToken;
+        : config.token;
     if (!token) return yield* new JiraNotConfiguredError({});
     return {
-      origin: origin.origin,
+      origin: config.origin.origin,
       authorization: `Basic ${Buffer.from(`${config.email}:${token}`).toString("base64")}`,
     };
   });
 
   const execute = Effect.fn("JiraClient.execute")(function* (
     request: HttpClientRequest.HttpClientRequest,
+    expectedHost?: string,
   ) {
-    const { origin, authorization } = yield* credentials();
+    const { origin, authorization } = yield* credentials(expectedHost);
     const response = yield* http
       .execute(
         request.pipe(
@@ -94,7 +106,11 @@ const make = Effect.gen(function* () {
     return { status: response.status, body, origin };
   });
 
-  return JiraClient.of({ execute });
+  const configuredHost = configuration().pipe(
+    Effect.map(({ origin }) => origin.host),
+    Effect.orElseSucceed(() => null),
+  );
+  return JiraClient.of({ execute, configuredHost });
 });
 
 export const layer = Layer.effect(JiraClient, make);

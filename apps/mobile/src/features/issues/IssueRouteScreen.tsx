@@ -302,6 +302,34 @@ function LinkedPullRequests(props: {
   );
 }
 
+function JiraPullRequests({
+  links,
+}: {
+  readonly links: NonNullable<IssueSummary["jiraWork"]>["pullRequests"];
+}) {
+  const gt = useGT();
+  return (
+    <View className="gap-2">
+      {links.map((pr) => (
+        <Pressable
+          key={pr.url}
+          accessibilityRole="link"
+          onPress={() => void Linking.openURL(pr.url)}
+          className="flex-row items-center gap-2 rounded-2xl bg-grouped-card p-3 active:opacity-70"
+        >
+          <SymbolView name="arrow.up.right" size={14} tintColorClassName="accent-icon-muted" />
+          <Text className="min-w-0 flex-1 text-sm" numberOfLines={2}>
+            {pr.title ??
+              (pr.number
+                ? gt("Pull request #{number}", { number: pr.number })
+                : gt("Pull request"))}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 /** The threads this issue is linked to, most recently active first; hidden while there are none. */
 function LinkedThreads(props: { readonly params: IssueParams; readonly host: string }) {
   const gt = useGT();
@@ -594,6 +622,19 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                         icon: "arrow.up.right",
                         onPress: () => void Linking.openURL(url),
                       },
+                      ...(issue?.tracker === "jira"
+                        ? [
+                            {
+                              id: "copy-ticket-command",
+                              title: gt("Copy /ticket"),
+                              icon: "doc.on.doc" as const,
+                              onPress: () =>
+                                copyTextWithHaptic(`/ticket ${issue.key}`, {
+                                  target: "issue link",
+                                }),
+                            },
+                          ]
+                        : []),
                       {
                         id: "copy-link",
                         title: gt("Copy link"),
@@ -658,6 +699,28 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                   onEditLabels={() => navigation.navigate("IssueLabels", identity)}
                   onEditAssignees={() => navigation.navigate("IssueAssignees", identity)}
                 />
+                {issue.jiraWork ? (
+                  <View className="gap-2">
+                    <Text className="text-sm text-foreground-muted">
+                      {[
+                        issue.jiraWork.release === null
+                          ? gt("No local release assigned")
+                          : gt("Release {release}", { release: issue.jiraWork.release }),
+                        issue.jiraWork.deploy?.label,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </Text>
+                    {issue.jiraWork.pullRequests.length > 0 ? (
+                      <>
+                        <PullRequestSectionHeading>
+                          <T>Pull requests</T>
+                        </PullRequestSectionHeading>
+                        <JiraPullRequests links={issue.jiraWork.pullRequests} />
+                      </>
+                    ) : null}
+                  </View>
+                ) : null}
                 {mutationError || olderCommentsError || (detail && detailQuery.error) ? (
                   <Text selectable className="text-sm text-danger-foreground">
                     {mutationError ?? olderCommentsError ?? detailQuery.error}

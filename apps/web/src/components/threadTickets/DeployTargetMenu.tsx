@@ -11,6 +11,7 @@ import { useState, type MouseEvent, type PointerEvent, type ReactNode } from "re
 
 import { cn } from "~/lib/utils";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { refreshIssueLists } from "~/state/issues";
 import { useEnvironmentScope } from "../../state/session";
 import { assignRelease, setDeployTarget } from "../../state/threadTickets";
 import { Badge } from "../ui/badge";
@@ -90,7 +91,10 @@ export function DeployTargetMenu({
     setSaving(true);
     const result = await run();
     setSaving(false);
-    if (result._tag !== "Failure") return;
+    if (result._tag !== "Failure") {
+      refreshIssueLists(environmentId);
+      return;
+    }
     const error = squashAtomCommandFailure(result);
     toastManager.add({
       type: "error",

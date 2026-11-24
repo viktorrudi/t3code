@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { JiraTicketWork, JiraWorkPullRequest } from "./threadTickets.ts";
 import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
@@ -111,6 +112,7 @@ export const IssueSummary = Schema.Struct({
   assignees: Schema.Array(IssueActor),
   labels: Schema.Array(IssueLabel),
   commentCount: NonNegativeInt,
+  jiraWork: Schema.optional(JiraTicketWork),
 });
 export type IssueSummary = typeof IssueSummary.Type;
 
@@ -539,6 +541,7 @@ export function threadIssueKeysEqual(left: ThreadIssueKey, right: ThreadIssueKey
 
 /** The threads an issue is linked to, most recently active first. */
 export const IssueLinkedThreadsResult = Schema.Struct({
+  jiraPullRequests: Schema.optional(Schema.Array(JiraWorkPullRequest)),
   threads: Schema.Array(
     Schema.Struct({
       id: ThreadId,

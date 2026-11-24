@@ -180,6 +180,7 @@ export const RPC_REQUIRED_SCOPES = {
   // Changes what the ticket skill promotes this release to, so it needs the operating grant.
   [WS_METHODS.threadTicketsSetDeployTarget]: AuthOrchestrationOperateScope,
   [WS_METHODS.threadTicketsAssignRelease]: AuthOrchestrationOperateScope,
+  [WS_METHODS.threadTicketsSetLink]: AuthOrchestrationOperateScope,
   [WS_METHODS.jiraGetIssue]: AuthOrchestrationReadScope,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.assetsPersistChatAttachments]: AuthOrchestrationOperateScope,

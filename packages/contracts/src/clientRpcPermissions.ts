@@ -59,6 +59,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.threadTicketsSetDeployTarget]: AuthOrchestrationOperateScope,
   // Rewrites the ticket's release in its notes, which decides where the deploy daemon tracks it.
   [WS_METHODS.threadTicketsAssignRelease]: AuthOrchestrationOperateScope,
+  [WS_METHODS.threadTicketsSetLink]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlCloneRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlPublishRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlStar]: AuthSourceControlWriteScope,

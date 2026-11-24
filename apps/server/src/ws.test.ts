@@ -78,6 +78,7 @@ import * as ThreadGroupTitles from "./orchestration-v2/personal/ThreadGroupTitle
 import * as DeployTargets from "./personal/DeployTargets.ts";
 import * as JiraIssues from "./personal/JiraIssues.ts";
 import * as ThreadTickets from "./personal/ThreadTickets.ts";
+import * as JiraThreadLinks from "./personal/JiraThreadLinks.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
@@ -832,6 +833,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(AgentSessionImporter.AgentSessionImporter)({}),
   Layer.mock(ThreadGroupTitles.ThreadGroupTitles)({}),
   Layer.mock(ThreadTickets.ThreadTickets)({}),
+  Layer.mock(JiraThreadLinks.JiraThreadLinks)({}),
   Layer.mock(DeployTargets.DeployTargets)({}),
   Layer.mock(JiraIssues.JiraIssues)({}),
   Layer.mock(AgentSessionScanner.AgentSessionScanner)({}),

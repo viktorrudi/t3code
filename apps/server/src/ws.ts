@@ -288,6 +288,8 @@ import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as ThreadGroupTitles from "./orchestration-v2/personal/ThreadGroupTitles.ts";
 import * as JiraIssues from "./personal/JiraIssues.ts";
+import * as JiraThreadLinks from "./personal/JiraThreadLinks.ts";
+import { JIRA_TRACKER } from "./personal/SensoneoJira.ts";
 import * as DeployTargets from "./personal/DeployTargets.ts";
 import * as ThreadTickets from "./personal/ThreadTickets.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
@@ -1532,6 +1534,7 @@ export const layerWsRpc = (
       const threadTickets = yield* ThreadTickets.ThreadTickets;
       const deployTargets = yield* DeployTargets.DeployTargets;
       const jiraIssues = yield* JiraIssues.JiraIssues;
+      const jiraLinks = yield* JiraThreadLinks.JiraThreadLinks;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
       const keybindings = yield* Keybindings.Keybindings;
@@ -1991,7 +1994,10 @@ export const layerWsRpc = (
         [WS_METHODS.issuesComments]: (input) => issues.comments(input),
         [WS_METHODS.issuesTemplates]: (input) => issues.templates(input),
         [WS_METHODS.issuesCandidates]: (input) => issues.candidates(input),
-        [WS_METHODS.issuesLinkedThreads]: (input) => threadIssues.linkedThreads(input),
+        [WS_METHODS.issuesLinkedThreads]: (input) =>
+          input.tracker === JIRA_TRACKER
+            ? jiraLinks.forIssue(input)
+            : threadIssues.linkedThreads(input),
         [WS_METHODS.issuesCreate]: (input) => issues.create(input),
         [WS_METHODS.issuesComment]: (input) => issues.comment(input),
         [WS_METHODS.issuesUpdate]: (input) => issues.update(input),
@@ -3076,6 +3082,7 @@ export const layerWsRpc = (
         [WS_METHODS.agentSessionsImport]: (input) =>
           agentSessionImporter.importRecentAgentThreads(input),
         [WS_METHODS.threadGroupsGenerateTitle]: (input) => threadGroupTitles.generate(input),
+        [WS_METHODS.threadTicketsSetLink]: (input) => jiraLinks.set(input),
         [WS_METHODS.threadTicketsSubscribe]: (_input) => threadTickets.changes,
         [WS_METHODS.threadTicketsSetDeployTarget]: (input) => deployTargets.set(input),
         [WS_METHODS.threadTicketsAssignRelease]: (input) => deployTargets.assign(input),
@@ -3628,6 +3635,7 @@ export const layer = Layer.unwrap(
     const pullRequests = yield* PullRequestService.PullRequestService;
     const issues = yield* IssueService.IssueService;
     const threadIssues = yield* ThreadIssueService.ThreadIssueService;
+    const jiraLinks = yield* JiraThreadLinks.JiraThreadLinks;
     const issueTrackers = yield* IssueTrackerConnections.IssueTrackerConnections;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
@@ -3720,6 +3728,7 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(Layer.succeed(IssueService.IssueService, issues)),
               Layer.provide(Layer.succeed(ThreadIssueService.ThreadIssueService, threadIssues)),
+              Layer.provide(Layer.succeed(JiraThreadLinks.JiraThreadLinks, jiraLinks)),
               Layer.provide(
                 Layer.succeed(IssueTrackerConnections.IssueTrackerConnections, issueTrackers),
               ),

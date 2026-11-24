@@ -35,6 +35,11 @@ export const setDeployTarget = createEnvironmentRpcCommand(connectionAtomRuntime
   tag: WS_METHODS.threadTicketsSetDeployTarget,
 });
 
+export const setJiraTicketLink = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:thread-tickets:set-link",
+  tag: WS_METHODS.threadTicketsSetLink,
+});
+
 export const assignRelease = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "environment-data:thread-tickets:assign-release",
   tag: WS_METHODS.threadTicketsAssignRelease,

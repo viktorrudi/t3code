@@ -14,6 +14,7 @@ import {
   PullRequestLabelChip,
   PullRequestActorAvatar,
 } from "../pullRequest/pullRequestPresentation";
+import { JiraIssueWork } from "./JiraIssueWork";
 import { IssueStateGlyph, issueTrackerPresentation } from "./issuePresentation";
 
 export type IssueRowTarget = Pick<
@@ -44,7 +45,10 @@ function IssueRowImpl({
   return (
     <div
       className={cn(
-        "flex items-center rounded-md [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
+        entry.jiraWork
+          ? "flex flex-col items-stretch [contain-intrinsic-block-size:84px]"
+          : "flex items-center [contain-intrinsic-block-size:56.5px]",
+        "rounded-md [content-visibility:auto]",
         selected ? "bg-accent" : "hover:bg-accent/60",
       )}
     >
@@ -106,6 +110,16 @@ function IssueRowImpl({
           updatedAt={entry.updatedAt}
         />
       </button>
+      {entry.jiraWork ? (
+        <div className="px-3 pb-2 pl-9">
+          <JiraIssueWork
+            environmentId={entry.environmentId}
+            ticketKey={entry.key}
+            work={entry.jiraWork}
+            compact
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -20,7 +20,10 @@ import * as ServerConfig from "../config.ts";
 /** Ticket chips per thread, read from a file an external script keeps current. */
 export class ThreadTickets extends Context.Service<
   ThreadTickets,
-  { readonly changes: Stream.Stream<ThreadTicketAnnotations> }
+  {
+    readonly changes: Stream.Stream<ThreadTicketAnnotations>;
+    readonly refresh: Effect.Effect<void>;
+  }
 >()("t3/personal/ThreadTickets") {}
 
 const EMPTY: ThreadTicketAnnotations = { threads: {} };
@@ -58,16 +61,15 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => EMPTY),
   );
   const annotations = yield* SubscriptionRef.make(yield* read);
+  const refresh = read.pipe(Effect.flatMap((next) => SubscriptionRef.set(annotations, next)));
   yield* fileSystem.watch(directory).pipe(
     Stream.filter((event) => path.basename(event.path) === THREAD_ANNOTATIONS_FILE),
     Stream.debounce(Duration.millis(100)),
-    Stream.runForEach(() =>
-      read.pipe(Effect.flatMap((next) => SubscriptionRef.set(annotations, next))),
-    ),
+    Stream.runForEach(() => refresh),
     Effect.ignoreCause({ log: true }),
     Effect.forkScoped,
   );
-  return ThreadTickets.of({ changes: SubscriptionRef.changes(annotations) });
+  return ThreadTickets.of({ changes: SubscriptionRef.changes(annotations), refresh });
 });
 
 export const layer = Layer.effect(ThreadTickets, make);

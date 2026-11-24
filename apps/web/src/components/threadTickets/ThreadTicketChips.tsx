@@ -17,12 +17,12 @@ const DEPLOY_BADGE_VARIANT = {
 // The chips sit inside a clickable row; a click opens the link without selecting the thread.
 const keepFromRow = (event: MouseEvent | PointerEvent) => event.stopPropagation();
 
-function TicketDeployBadge({
+export function TicketDeployBadge({
   environmentId,
   ticketKey,
   deploy,
 }: {
-  environmentId: EnvironmentId | undefined;
+  environmentId?: EnvironmentId | undefined;
   ticketKey: string;
   deploy: ThreadTicketDeploy;
 }) {

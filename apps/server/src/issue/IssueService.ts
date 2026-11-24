@@ -44,6 +44,7 @@ import {
 } from "@t3tools/source-control-core/server/IssueTracker";
 import { parseUrl } from "@t3tools/shared/url";
 
+import { JIRA_HOST, JIRA_TRACKER, jiraProject, jiraScopes } from "../personal/SensoneoJira.ts";
 import * as IssueTrackerBindings from "../persistence/IssueTrackerBindings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -200,6 +201,7 @@ const make = Effect.gen(function* () {
   const resolveProjectTracker = (
     project: OrchestrationProjectShell,
     binding: IssueTrackerProjectBinding | undefined,
+    includeSensoneoJira: boolean,
   ) =>
     (project.repositoryIdentity != null
       ? Effect.succeed(project.repositoryIdentity)
@@ -208,7 +210,10 @@ const make = Effect.gen(function* () {
       Effect.map((repositoryIdentity) => {
         const standalone = resolveStandaloneBinding(binding);
         const gitHost = resolveGitHostBindings({ ...project, repositoryIdentity });
-        return standalone === null ? gitHost : [standalone, ...gitHost];
+        const jira = includeSensoneoJira
+          ? jiraScopes(project).map((scope) => ({ tracker: JIRA_TRACKER, host: JIRA_HOST, scope }))
+          : [];
+        return standalone === null ? [...gitHost, ...jira] : [standalone, ...gitHost, ...jira];
       }),
     );
 
@@ -249,10 +254,13 @@ const make = Effect.gen(function* () {
                 }),
             ),
           );
+          const jiraConfigured = shells.some((project) => jiraScopes(project).length > 0)
+            ? yield* registry.sensoneoJiraConfigured ?? Effect.succeed(false)
+            : false;
           return yield* Effect.forEach(
             shells,
             (project) =>
-              resolveProjectTracker(project, bound.get(project.id)).pipe(
+              resolveProjectTracker(project, bound.get(project.id), jiraConfigured).pipe(
                 Effect.map((candidates) =>
                   candidates.map((candidate) => ({ project, ...candidate })),
                 ),
@@ -308,11 +316,15 @@ const make = Effect.gen(function* () {
         const own = onHost.find(
           (candidate) => candidate.scope.toLowerCase() === scope.toLowerCase(),
         );
-        const served = own ?? onHost[0];
+        const served = own ?? (ref.tracker === JIRA_TRACKER ? undefined : onHost[0]);
         if (served === undefined) {
           return Effect.fail(new IssueUnavailableError({ reason: "tracker-unsupported" }));
         }
-        return Effect.succeed({ ...served, scope, writable: own !== undefined });
+        return Effect.succeed({
+          ...served,
+          scope,
+          writable: own !== undefined && ref.tracker !== JIRA_TRACKER,
+        });
       }),
     );
 
@@ -699,6 +711,30 @@ const make = Effect.gen(function* () {
 
   const resolveUrl: IssueService["Service"]["resolveUrl"] = Effect.fn("IssueService.resolveUrl")(
     function* (url, preferredProjectId) {
+      const jiraUrl = parseUrl(url);
+      if (jiraUrl?.origin === `https://${JIRA_HOST}`) {
+        const key = /^\/browse\/([A-Z0-9-]+)\/?$/u.exec(jiraUrl.pathname)?.[1];
+        const scope = key === undefined ? undefined : jiraProject(key);
+        if (key !== undefined && scope !== undefined) {
+          const { supported } = yield* listProjects({ host: JIRA_HOST });
+          const candidates = supported.filter(
+            (candidate) => candidate.tracker === JIRA_TRACKER && candidate.scope === scope,
+          );
+          const project =
+            candidates.find((candidate) => candidate.project.id === preferredProjectId) ??
+            candidates[0];
+          if (project) {
+            return {
+              projectId: project.project.id,
+              tracker: JIRA_TRACKER,
+              host: JIRA_HOST,
+              scope,
+              key,
+              writable: false,
+            };
+          }
+        }
+      }
       const recognized = sourceControlDefinitions.parseIssueUrl(url);
       const standalone =
         recognized === null ? findStandaloneIssueUrl(registry.standalone, url) : null;

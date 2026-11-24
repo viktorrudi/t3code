@@ -186,6 +186,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.agentSessionsScan]: "workspace",
   [WS_METHODS.agentSessionsImport]: "workspace",
   [WS_METHODS.threadGroupsGenerateTitle]: "orchestration",
+  [WS_METHODS.threadTicketsSetLink]: "threadTickets",
   [WS_METHODS.threadTicketsSubscribe]: "orchestration",
   [WS_METHODS.threadTicketsSetDeployTarget]: "orchestration",
   [WS_METHODS.threadTicketsAssignRelease]: "orchestration",

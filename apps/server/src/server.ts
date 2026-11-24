@@ -220,6 +220,7 @@ import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as DeployTargets from "./personal/DeployTargets.ts";
 import * as JiraClient from "./personal/JiraClient.ts";
 import * as JiraIssues from "./personal/JiraIssues.ts";
+import * as JiraThreadLinks from "./personal/JiraThreadLinks.ts";
 import * as ThreadTickets from "./personal/ThreadTickets.ts";
 import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -906,6 +907,7 @@ const layerMakeRoutes = Layer.mergeAll(
   // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
   Layer.provide(layerPullRequestService),
   Layer.provide(layerThreadIssueService),
+  Layer.provide(JiraThreadLinks.layer),
   Layer.provide(layerIssueService),
   // The same activity instance RunExecutionService reports to, by layer memoization.
   Layer.provide(
