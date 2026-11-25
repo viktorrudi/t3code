@@ -383,6 +383,7 @@ export function IssueDetailPanel({
   threadRef = null,
   listEntry = null,
   onSelectPullRequest,
+  onSelectIssue,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
@@ -391,6 +392,8 @@ export function IssueDetailPanel({
   threadRef?: ScopedThreadRef | null;
   /** Opens a linked change request beside this one; absent, the link goes to the host. */
   onSelectPullRequest?: ((reference: PullRequestRef) => void) | undefined;
+  /** Opens a related issue in this panel; absent, the link goes to the tracker. */
+  onSelectIssue?: ((reference: IssueRef) => void) | undefined;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -427,13 +430,38 @@ export function IssueDetailPanel({
     return <IssueDetailGhost seed={listEntry} />;
   }
 
+  const loadOlder = async () => {
+    const failure = await pager.loadOlder(registry, (cursor) =>
+      loadComments({ environmentId, input: { ...reference, cursor } }),
+    );
+    if (failure) {
+      toastManager.add({ type: "error", title: m(msg("Older comments could not be read")) });
+    }
+  };
+  const refresh = () =>
+    void pager.refresh(registry, () =>
+      executeAtomQuery(registry, detailAtom, { refresh: true, reportFailure: false }),
+    );
+
   if (detail.tracker === "jira") {
     return (
       <JiraIssueDetail
         environmentId={environmentId}
         issue={detail}
         reference={reference}
-        onRefresh={detailQuery.refresh}
+        threadRef={threadRef}
+        cwd={cwd}
+        comments={{
+          comments,
+          nextCursor,
+          loadingOlder,
+          canLoadOlder,
+          loadOlder: () => void loadOlder(),
+        }}
+        refreshing={detailQuery.isPending}
+        refreshError={detailQuery.error}
+        onRefresh={refresh}
+        onSelectIssue={onSelectIssue}
       />
     );
   }
@@ -453,15 +481,6 @@ export function IssueDetailPanel({
   const otherStates = access.states;
   const tracker = issueTrackerPresentation(detail.tracker);
   const currentState = issueStatePresentation(detail.state);
-
-  const loadOlder = async () => {
-    const failure = await pager.loadOlder(registry, (cursor) =>
-      loadComments({ environmentId, input: { ...reference, cursor } }),
-    );
-    if (failure) {
-      toastManager.add({ type: "error", title: m(msg("Older comments could not be read")) });
-    }
-  };
 
   const save = async (patch: { title?: string; body?: string }) => {
     setSaving(true);
@@ -589,11 +608,7 @@ export function IssueDetailPanel({
               variant="ghost"
               aria-label={gt("Refresh issue")}
               disabled={detailQuery.isPending}
-              onClick={() =>
-                void pager.refresh(registry, () =>
-                  executeAtomQuery(registry, detailAtom, { refresh: true, reportFailure: false }),
-                )
-              }
+              onClick={refresh}
             >
               <RefreshIcon size="sm" refreshing={detailQuery.isPending} />
             </Button>

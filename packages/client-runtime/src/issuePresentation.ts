@@ -1,4 +1,4 @@
-import type { IssueDetail, IssueEvent } from "@t3tools/contracts";
+import type { IssueActor, IssueDetail, IssueEvent } from "@t3tools/contracts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
@@ -79,4 +79,14 @@ export function issueWriteAccess(
       ? detail.states.filter((state) => state.name !== detail.state.name)
       : [],
   };
+}
+
+/**
+ * Jira's `login` is an opaque accountId, so its people show by display name. Display only:
+ * filters, keys and identity keep the original actor.
+ */
+export function issueDisplayActor(tracker: string, actor: IssueActor | null): IssueActor | null {
+  if (tracker !== "jira" || actor === null) return actor;
+  const name = actor.name?.trim();
+  return name ? { ...actor, login: name, name: null } : actor;
 }

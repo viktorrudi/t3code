@@ -19,6 +19,7 @@ import {
   PULL_REQUEST_ROW_NUMBER_CLASS,
   PullRequestRowLines,
 } from "../pullRequest/PullRequestListRow";
+import { issueDisplayActor } from "@t3tools/client-runtime/issue-presentation";
 import { PullRequestActorLabel } from "../pullRequest/pullRequestPresentation";
 import { ThreadDetailsControl, ThreadDetailsMoreButton } from "./ThreadDetailsControl";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -95,7 +96,10 @@ function LinkedIssueRow({
         meta={
           <>
             {detail?.author ? (
-              <PullRequestActorLabel actor={detail.author} tooltip={false} />
+              <PullRequestActorLabel
+                actor={issueDisplayActor(link.tracker, detail.author)}
+                tooltip={false}
+              />
             ) : null}
             {trackerIcon}
             <span className="truncate">{link.scope}</span>

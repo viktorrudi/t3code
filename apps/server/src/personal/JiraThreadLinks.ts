@@ -1,4 +1,5 @@
 import {
+  CommandId,
   IssueOperationError,
   JiraIssueError,
   type IssueLinkedThreadsResult,
@@ -6,12 +7,15 @@ import {
   type ThreadIssueKey,
 } from "@t3tools/contracts";
 import * as Config from "effect/Config";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Semaphore from "effect/Semaphore";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as SqlClient from "effect/sql/SqlClient";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeOS from "node:os";
 
@@ -37,6 +41,9 @@ export class JiraThreadLinks extends Context.Service<
 
 const make = Effect.gen(function* () {
   const issues = yield* IssueService.IssueService;
+  const sql = yield* SqlClient.SqlClient;
+  const random = yield* SecureRandom.SecureRandom;
+  const writes = yield* Semaphore.make(1);
   const fs = yield* FileSystem.FileSystem;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projects = yield* ProjectService.ProjectService;
@@ -64,31 +71,31 @@ const make = Effect.gen(function* () {
         detail: "This Jira ticket cannot be linked to that chat.",
       });
     }
-    if (input.linked) {
-      const issue = yield* issues
-        .detail({
-          projectId: thread.projectId,
-          tracker: JIRA_TRACKER,
-          host: JIRA_HOST,
-          scope,
-          key: input.key,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new JiraIssueError({
-                key: input.key,
-                detail: "Could not verify the Jira ticket.",
-                cause,
-              }),
-          ),
-        );
-      if (issue.key !== input.key) {
-        return yield* new JiraIssueError({
-          key: input.key,
-          detail: "The Jira ticket key changed. Search for it again.",
-        });
-      }
+    const issue = input.linked
+      ? yield* issues
+          .detail({
+            projectId: thread.projectId,
+            tracker: JIRA_TRACKER,
+            host: JIRA_HOST,
+            scope,
+            key: input.key,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new JiraIssueError({
+                  key: input.key,
+                  detail: "Could not verify the Jira ticket.",
+                  cause,
+                }),
+            ),
+          )
+      : null;
+    if (issue !== null && issue.key !== input.key) {
+      return yield* new JiraIssueError({
+        key: input.key,
+        detail: "The Jira ticket key changed. Search for it again.",
+      });
     }
     const command = ChildProcess.make(
       "/usr/bin/env",
@@ -129,8 +136,47 @@ const make = Effect.gen(function* () {
       });
     }
     yield* tickets.refresh;
+    // The registry owns work metadata; the native relation makes the same link navigable everywhere.
+    const commandId = CommandId.make(`jira-link:${yield* random.uuidV4().pipe(Effect.orDie)}`);
+    const identity = {
+      threadId: input.threadId,
+      tracker: JIRA_TRACKER,
+      host: JIRA_HOST,
+      scope,
+      key: input.key,
+    };
+    yield* orchestrator
+      .dispatch(
+        issue === null
+          ? {
+              ...identity,
+              commandId,
+              type: "thread.issue.unlink",
+            }
+          : {
+              ...identity,
+              commandId,
+              type: "thread.issue.link",
+              projectId: thread.projectId,
+              url: issue.url,
+              displayKey: issue.displayKey,
+              title: issue.title,
+              source: "manual",
+            },
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new JiraIssueError({
+              key: input.key,
+              detail:
+                "Local tracking saved, but the chat link could not be refreshed. Retry the same action.",
+              cause,
+            }),
+        ),
+      );
     return { annotationsRefreshed: Number(code) === 0 };
-  });
+  }, writes.withPermits(1));
 
   const forIssue = Effect.fn("JiraThreadLinks.forIssue")(function* (key: ThreadIssueKey) {
     if (key.host !== JIRA_HOST || jiraProject(key.key) !== key.scope.toUpperCase()) {
@@ -141,6 +187,7 @@ const make = Effect.gen(function* () {
       Effect.provideService(ProjectService.ProjectService, projects),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(SqlClient.SqlClient, sql),
       Effect.mapError(
         (cause) =>
           new IssueOperationError({

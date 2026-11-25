@@ -3,7 +3,7 @@ import type { ProviderInstanceEntry } from "../providerInstances";
 const SENSONEO_PROJECT_TITLES = new Set(["sensoneo", "sensoneo frontend"]);
 const SENSONEO_INSTANCES = new Set(["claude-sensoneo", "litellm-sensoneo", "cursor"]);
 
-export function isSensoneoProject(projectTitle: string | null): boolean {
+function isSensoneoProject(projectTitle: string | null): boolean {
   return SENSONEO_PROJECT_TITLES.has(projectTitle?.trim().toLowerCase() ?? "");
 }
 

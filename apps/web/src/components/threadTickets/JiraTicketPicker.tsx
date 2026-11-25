@@ -26,21 +26,47 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const JiraTracker = IssueTrackerKind.make("jira");
 
-export function JiraTicketPicker({
-  environmentId,
-  threadId,
-  tickets,
-}: {
-  environmentId: EnvironmentId;
-  threadId: ThreadId;
-  tickets: readonly ThreadTicket[];
-}) {
+/** Links or unlinks a ticket through the skill's tracking, then refreshes what shows the link. */
+export function useChangeJiraTicketLink(environmentId: EnvironmentId) {
   const gt = useGT();
+  const changeLink = useAtomCommand(setJiraTicketLink, { reportFailure: false });
+  return async (threadId: ThreadId, key: string, linked: boolean): Promise<boolean> => {
+    const result = await changeLink({ environmentId, input: { threadId, key, linked } });
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: linked ? gt("Could not link the issue") : gt("Could not unlink the issue"),
+      });
+      return false;
+    }
+    if (!result.value.annotationsRefreshed) {
+      toastManager.add({
+        type: "warning",
+        title: gt("Link saved. Chat badges could not be refreshed."),
+      });
+    }
+    refreshIssueLists(environmentId);
+    appAtomRegistry.refresh(
+      issueEnvironment.linkedThreads({
+        environmentId,
+        input: {
+          tracker: JiraTracker,
+          host: SENSONEO_JIRA_HOST,
+          scope: key.split("-")[0] ?? "",
+          key,
+        },
+      }),
+    );
+    return true;
+  };
+}
+
+/** The project a Sensoneo chat links Jira tickets through, or null where linking is not offered. */
+export function useJiraTicketLinkProject(environmentId: EnvironmentId, threadId: ThreadId) {
   const configs = useServerConfigs();
   const projects = useProjects();
   const thread = useThreadShell({ environmentId, threadId });
   const canLink = useAtomValue(setJiraTicketLink.permissionAtom(environmentId));
-  const [open, setOpen] = useState(false);
   const project = projects.find(
     (candidate) => candidate.environmentId === environmentId && candidate.id === thread?.projectId,
   );
@@ -51,6 +77,54 @@ export function JiraTicketPicker({
     !/\/sensoneo\/(?:frontend|test-composer\/test-composer)\/?$/u.test(project.workspaceRoot)
   )
     return null;
+  return project.id;
+}
+
+export function JiraTicketLinkDialog({
+  environmentId,
+  projectId,
+  threadId,
+  tickets,
+  onClose,
+}: {
+  environmentId: EnvironmentId;
+  projectId: ProjectId;
+  threadId: ThreadId;
+  tickets: readonly ThreadTicket[];
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogPopup className="max-w-md" showCloseButton={false}>
+        <DialogTitle className="sr-only">
+          <T>Link Jira ticket</T>
+        </DialogTitle>
+        <JiraTicketSearch
+          environmentId={environmentId}
+          projectId={projectId}
+          threadId={threadId}
+          tickets={tickets}
+          onLinked={onClose}
+        />
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+/** Linking a first ticket, for a chat with none yet. */
+export function JiraTicketPicker({
+  environmentId,
+  threadId,
+  tickets,
+}: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  tickets: readonly ThreadTicket[];
+}) {
+  const gt = useGT();
+  const projectId = useJiraTicketLinkProject(environmentId, threadId);
+  const [open, setOpen] = useState(false);
+  if (projectId === null) return null;
   return (
     <>
       <Tooltip>
@@ -71,20 +145,13 @@ export function JiraTicketPicker({
         </TooltipPopup>
       </Tooltip>
       {open ? (
-        <Dialog open onOpenChange={setOpen}>
-          <DialogPopup className="max-w-md" showCloseButton={false}>
-            <DialogTitle className="sr-only">
-              <T>Link Jira ticket</T>
-            </DialogTitle>
-            <JiraTicketSearch
-              environmentId={environmentId}
-              projectId={project.id}
-              threadId={threadId}
-              tickets={tickets}
-              onLinked={() => setOpen(false)}
-            />
-          </DialogPopup>
-        </Dialog>
+        <JiraTicketLinkDialog
+          environmentId={environmentId}
+          projectId={projectId}
+          threadId={threadId}
+          tickets={tickets}
+          onClose={() => setOpen(false)}
+        />
       ) : null}
     </>
   );
@@ -108,7 +175,6 @@ function JiraTicketSearch({
   const [all, setAll] = useState(false);
   const [pending, setPending] = useState(false);
   const search = useDebouncedValue(query.trim(), 300);
-  const changeLink = useAtomCommand(setJiraTicketLink, { reportFailure: false });
   const list = useIssueList([
     {
       environmentId,
@@ -126,37 +192,13 @@ function JiraTicketSearch({
   const answers = answer?.entries ?? [];
   const trackerError = answer?.trackers.find((tracker) => !tracker.configured)?.detail;
   const error = list.error ?? trackerError ?? answer?.errors[0]?.message;
+  const changeLink = useChangeJiraTicketLink(environmentId);
   const link = async (key: string, linked: boolean) => {
     if (pending) return;
     setPending(true);
-    const result = await changeLink({ environmentId, input: { threadId, key, linked } });
+    const changed = await changeLink(threadId, key, linked);
     setPending(false);
-    if (result._tag === "Failure") {
-      toastManager.add({
-        type: "error",
-        title: linked ? gt("Could not link the issue") : gt("Could not unlink the issue"),
-      });
-      return;
-    }
-    if (!result.value.annotationsRefreshed) {
-      toastManager.add({
-        type: "warning",
-        title: gt("Link saved. Chat badges could not be refreshed."),
-      });
-    }
-    refreshIssueLists(environmentId);
-    appAtomRegistry.refresh(
-      issueEnvironment.linkedThreads({
-        environmentId,
-        input: {
-          tracker: JiraTracker,
-          host: SENSONEO_JIRA_HOST,
-          scope: key.split("-")[0] ?? "",
-          key,
-        },
-      }),
-    );
-    onLinked();
+    if (changed) onLinked();
   };
   return (
     <Command mode="none" value={query} onValueChange={setQuery} aria-label={gt("Link Jira ticket")}>

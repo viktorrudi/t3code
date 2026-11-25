@@ -6,16 +6,16 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import {
   DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
-  type JiraIssueDetails,
+  IssueTrackerKind,
   type LocalApi,
   ProjectId,
   ThreadId,
   type ScopedThreadRef,
+  type ThreadIssueLink,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
-import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -30,6 +30,8 @@ import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { jiraIssueAtom, useThreadTickets } from "../state/threadTickets";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useRightPanelStore } from "../rightPanelStore";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
@@ -144,7 +146,7 @@ function threadShell(projectId: ProjectId, index: number): EnvironmentThreadShel
   });
 }
 
-it("toggles branch names while a Sensoneo card leads with its Jira ticket and status", async () => {
+it("toggles branch names and shows each Jira ticket on a card once", async () => {
   using stack = new DisposableStack();
   const style = document.createElement("style");
   style.textContent = appCss;
@@ -163,7 +165,19 @@ it("toggles branch names while a Sensoneo card leads with its Jira ticket and st
 
   const sensoneo = project("Sensoneo");
   const personal = project("Personal");
-  const thread = { ...threadShell(sensoneo.id, 0), branch: "fix-ticket" };
+  const nativeLink = {
+    tracker: IssueTrackerKind.make("jira"),
+    host: "sensoneosk.atlassian.net",
+    scope: "RET",
+    key: "RET-123",
+    projectId: sensoneo.id,
+    url: "https://sensoneosk.atlassian.net/browse/RET-123",
+    source: "manual",
+    linkedAt: "2026-11-24T10:00:00.000Z",
+    displayKey: "RET-123",
+    title: "Fix the redirect",
+  } as ThreadIssueLink;
+  const thread = { ...threadShell(sensoneo.id, 0), branch: "fix-ticket", issues: [nativeLink] };
   const otherThread = { ...threadShell(personal.id, 1), branch: "main" };
   const routeThreadRef = { environmentId: sensoneo.environmentId, threadId: thread.id };
   vi.mocked(useProjects).mockReturnValue([sensoneo, personal]);
@@ -178,25 +192,17 @@ it("toggles branch names while a Sensoneo card leads with its Jira ticket and st
     routeDraftId: null,
     routeThreadRef,
   });
-  const issue = {
-    key: "RET-123",
-    url: "https://sensoneosk.atlassian.net/browse/RET-123",
-    summary: "Fix the redirect",
-    issueType: "Bug",
-    status: { name: "In Review", category: "indeterminate" },
-    transitions: [],
-    assignee: { displayName: "Sam Tester", avatarUrl: null },
-  } satisfies JiraIssueDetails;
-  const issueResult = Atom.make(AsyncResult.success<JiraIssueDetails>(issue));
-  vi.mocked(jiraIssueAtom).mockReturnValue(issueResult);
   vi.mocked(useThreadTickets).mockImplementation((_environmentId, id) =>
     id === thread.id
-      ? [{ key: issue.key, url: issue.url, deploy: { label: "QA", tone: "info" } }]
+      ? [
+          { key: "RET-123", url: nativeLink.url, deploy: { label: "QA", tone: "info" } },
+          { key: "RET-200", url: "https://sensoneosk.atlassian.net/browse/RET-200" },
+        ]
       : [],
   );
   stack.defer(() => {
-    vi.mocked(jiraIssueAtom).mockReset();
     vi.mocked(useThreadTickets).mockReset();
+    useRightPanelStore.getState().closeAllSurfaces(routeThreadRef);
   });
 
   await using screen = await render(
@@ -211,39 +217,33 @@ it("toggles branch names while a Sensoneo card leads with its Jira ticket and st
   );
   const card = screen.getByRole("button", { name: /Thread 0/ });
   const otherCard = screen.getByRole("button", { name: /Thread 1/ });
-  const ticket = card.getByRole("link", { name: /RET-123/ });
   const branch = card.getByText("fix-ticket", { exact: true });
   const otherBranch = otherCard.getByText("main", { exact: true });
-  const status = card.getByText("In Review", { exact: true });
-  const deploy = card.getByText("QA", { exact: true });
-  const assignee = card.getByRole("img", { name: "Sam Tester" });
+  const legacyTicket = card.getByRole("button", { name: "Open RET-200" });
   const toggle = screen.getByRole("switch", { name: "Show branches on sidebar cards" });
   await expect.element(toggle).toBeChecked();
   await expect.element(otherBranch).toBeInTheDocument();
-  await expect.element(status).toBeVisible();
-  await expect.element(ticket).toHaveAttribute("href", issue.url);
+  await expect.element(card.getByText("QA", { exact: true })).toBeVisible();
+  await expect.element(legacyTicket).toBeVisible();
+  expect(card.getByText("RET-123", { exact: true }).elements()).toHaveLength(1);
+  expect(jiraIssueAtom).not.toHaveBeenCalled();
+
+  await userEvent.click(legacyTicket);
+  const surfaces =
+    useRightPanelStore.getState().byThreadKey[scopedThreadKey(routeThreadRef)]?.surfaces ?? [];
   expect(
-    ticket.element().compareDocumentPosition(branch.element()) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
+    surfaces.some((surface) => surface.id.endsWith(":jira:sensoneosk.atlassian.net:ret:RET-200")),
+  ).toBe(true);
 
   await userEvent.click(toggle);
   await expect.element(toggle).not.toBeChecked();
   await expect.element(branch).not.toBeInTheDocument();
   await expect.element(otherBranch).not.toBeInTheDocument();
-  await expect.element(status).toBeVisible();
-  await expect.element(deploy).toBeVisible();
-  await expect.element(assignee).toBeVisible();
-  expect(assignee.element().getBoundingClientRect().right).toBeLessThan(
-    card.element().getBoundingClientRect().right,
-  );
   expect(localStorage.getItem(storageKey)).toBe("false");
 
   await userEvent.click(toggle);
   await expect.element(branch).toBeInTheDocument();
   await expect.element(otherBranch).toBeInTheDocument();
-
-  await userEvent.hover(assignee);
-  await expect.element(page.getByText("Sam Tester", { exact: true })).toBeVisible();
 });
 
 describe("sidebar render isolation", () => {

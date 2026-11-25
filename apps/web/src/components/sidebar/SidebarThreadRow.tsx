@@ -133,12 +133,15 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ThreadTicketChips } from "../threadTickets/ThreadTicketChips";
 import { useThreadTickets } from "../../state/threadTickets";
+import {
+  jiraTicketIssueTarget,
+  mergeThreadJiraTickets,
+} from "../threadTickets/threadJiraTickets.logic";
 import { ActivityShimmerOverlay } from "../chat/TimelineRowParts";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 import { ThreadDetailsIssueRows } from "../chat/ThreadDetailsIssueRows";
 import { IssueGlyph, issueStatePresentation } from "../issue/issuePresentation";
-import { isSensoneoProject } from "../../personal/projectModels";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -1322,13 +1325,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const diff = latestRunDiff(thread);
   const displayedBranch = props.showBranch ? checkoutThread.branch : null;
   const showsWorktree = Boolean(checkoutThread.branch && checkoutThread.worktreePath?.trim());
-  const jiraTicketsLead = isSensoneoProject(props.project?.title ?? null) && tickets.length > 0;
+  const jiraTickets = mergeThreadJiraTickets(tickets, thread.issues);
   const ticketChips = (
     <ThreadTicketChips
-      tickets={tickets}
+      tickets={jiraTickets}
       environmentId={thread.environmentId}
-      showJiraDetails={jiraTicketsLead}
-      leaseJiraDetails={leaseLiveStatus}
+      onOpen={(ticket) => {
+        useRightPanelStore
+          .getState()
+          .openIssue(threadRef, jiraTicketIssueTarget(ticket, thread.projectId));
+        if (!props.isRouteThread) onThreadActivate(threadRef);
+      }}
     />
   );
   // Only the trailing icons would remain, so the row moves them to the title line instead.
@@ -1343,7 +1350,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     runningTerminalIds.length === 0;
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-      {jiraTicketsLead ? ticketChips : null}
       {showsWorktree ? <ThreadWorktreeIndicator thread={checkoutThread} /> : null}
       {displayedBranch ? (
         <span className="flex min-w-0 flex-1">
@@ -1361,10 +1367,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       ) : (
         <span className="flex-1" />
       )}
-      {jiraTicketsLead ? null : ticketChips}
       {terminalStatusIcon}
       {prBadge}
       {issueBadge}
+      {ticketChips}
       {diff ? (
         <span className="shrink-0 font-mono">
           <span className="text-diff-addition-foreground">+{formatDiffCount(diff.insertions)}</span>{" "}
@@ -1637,7 +1643,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           <div
             className={cn(
               "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
-              jiraTicketsLead && tickets.length > 1 && "h-auto min-h-[4.875rem]",
               metaLineEmpty && "h-auto",
             )}
           >

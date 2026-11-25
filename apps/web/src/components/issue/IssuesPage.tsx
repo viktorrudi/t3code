@@ -909,6 +909,22 @@ export function IssuesPage() {
                     environmentId: panelEnvironmentId,
                   });
                 }}
+                onSelectIssue={(reference) => {
+                  const { host, ...target } = reference;
+                  useRightPanelStore.getState().openIssue(rightPanelRef, {
+                    ...target,
+                    ...(host ? { host } : {}),
+                    environmentId: panelEnvironmentId,
+                  });
+                  updateSearch({
+                    selectedEnvironmentId: panelEnvironmentId,
+                    selectedProjectId: reference.projectId,
+                    selectedHost: reference.host,
+                    tracker: reference.tracker,
+                    scope: reference.scope,
+                    key: reference.key,
+                  });
+                }}
               />
             ) : (
               <PullRequestDetailPanel
