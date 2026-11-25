@@ -5,7 +5,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { readWorkingAgentCount } from "./HostResources.activity.ts";
 
 it.effect(
-  "counts local executing turns once across projects, excluding queued, waiting, completed and superseded attempts",
+  "counts thinking turns without tool nodes once across projects, excluding queued, waiting, completed and superseded attempts",
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -28,7 +28,7 @@ it.effect(
       VALUES (${id},${id},${id},1,${id},'codex',${id},'running','{}')`;
         yield* sql`INSERT INTO orchestration_v2_projection_nodes
       (node_id,thread_id,run_id,root_node_id,kind,status,provider_turn_id,payload_json)
-      VALUES (${id},${id},${id},${id},'provider_turn','running',${id},'{}')`;
+      VALUES (${id},${id},${id},${id},'provider_turn','running',NULL,'{}')`;
         yield* sql`INSERT INTO orchestration_v2_projection_provider_turns
       (provider_turn_id,thread_id,provider_thread_id,node_id,run_attempt_id,ordinal,status,payload_json)
       VALUES (${id},${id},${id},${id},${id},1,${turnStatus},'{}')`;
