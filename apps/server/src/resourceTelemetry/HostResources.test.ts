@@ -100,6 +100,7 @@ describe("HostResources.layer", () => {
       // One CPU of quota, 150 ms of it used during the 200 ms sample.
       assert.strictEqual(snapshot.cpuCount, 1);
       assert.strictEqual(snapshot.cpuUtilization, 0.75);
+      assert.strictEqual(snapshot.scope, "constrained");
     }).pipe(
       Effect.provide(
         linuxHost({
@@ -122,6 +123,7 @@ describe("HostResources.layer", () => {
       assert.strictEqual(snapshot.totalMemoryBytes, GiB);
       // 600 MiB charged, of which 100 MiB is reclaimable page cache.
       assert.strictEqual(snapshot.availableMemoryBytes, GiB - 500 * MiB);
+      assert.strictEqual(snapshot.scope, "constrained");
     }).pipe(
       Effect.provide(
         linuxHost({
@@ -158,6 +160,7 @@ describe("HostResources.layer", () => {
 
       assert.strictEqual(snapshot.cpuCount, 1);
       assert.strictEqual(snapshot.cpuUtilization, 1);
+      assert.strictEqual(snapshot.scope, "constrained");
     }).pipe(
       Effect.provide(
         linuxHost({
@@ -185,6 +188,7 @@ describe("HostResources.layer", () => {
 
       assert.strictEqual(snapshot.totalMemoryBytes, 4 * GiB);
       assert.strictEqual(snapshot.availableMemoryBytes, 2 * GiB);
+      assert.strictEqual(snapshot.scope, "host");
     }).pipe(
       Effect.provide(
         linuxHost({
@@ -202,6 +206,7 @@ describe("HostResources.layer", () => {
       const snapshot = yield* read;
 
       assert.strictEqual(snapshot.cpuCount, 8);
+      assert.strictEqual(snapshot.scope, "host");
       assert.closeTo(snapshot.cpuUtilization ?? Number.NaN, 0.25, 1e-9);
       assert.strictEqual(snapshot.availableMemoryBytes, 2 * GiB);
     }).pipe(Effect.provide(linuxHost(unlimitedCgroup))),

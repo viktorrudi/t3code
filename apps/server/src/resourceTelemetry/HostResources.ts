@@ -173,6 +173,12 @@ const make = Effect.fn("makeHostResources")(function* () {
       );
     }
     return {
+      scope:
+        cpuMax !== null ||
+        (allowedCpus !== null && cpu.count < NodeOS.cpus().length) ||
+        (memoryMax !== null && memoryCurrent !== null)
+          ? ("constrained" as const)
+          : ("host" as const),
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
       cpuCount,

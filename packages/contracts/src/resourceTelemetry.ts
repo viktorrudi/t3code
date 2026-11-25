@@ -7,6 +7,7 @@ import { DesktopUpdateChannelSchema, DesktopUpdateStateSchema } from "./ipc.ts";
 export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
 
 export const HostResourcesSnapshot = Schema.Struct({
+  scope: Schema.optional(Schema.Literals(["host", "constrained"])),
   sampledAt: NonNegativeInt,
   cpuUtilization: Schema.NullOr(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
   cpuCount: NonNegativeInt,
