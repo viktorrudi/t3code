@@ -1,5 +1,9 @@
 import { projectModelInstances } from "../../personal/projectModels";
-import { useAtSearchMode, useRecentModelMentions } from "../../personal/personalSettings";
+import {
+  useAtSearchMode,
+  useRecentModelMentions,
+  useRecentEnvironmentMentions,
+} from "../../personal/personalSettings";
 import { modelMentionKey, serializeModelMention } from "../../personal/modelMentions";
 import { useProject } from "../../state/entities";
 import { copySnapshot } from "./copySnapshot";
@@ -1146,6 +1150,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const linkedEnvironments = useLinkedEnvironments(environmentId);
   const [atSearchMode] = useAtSearchMode();
   const modelMentionRecents = useRecentModelMentions(environmentId);
+  const environmentMentionRecents = useRecentEnvironmentMentions();
   const mentionProject = useProject(
     activeProjectId === null ? null : { environmentId, projectId: activeProjectId },
   );
@@ -1155,6 +1160,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     emptyState: composerMenuEmptyState,
   } = useComposerMenuItems({
     composerTrigger,
+    recentEnvironmentIds: environmentMentionRecents.recentIds,
     modelSearch:
       atSearchMode === "models"
         ? {
@@ -2159,7 +2165,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "environment") {
-      if (trigger.kind !== "path") return;
+      if (trigger.kind !== "path" && trigger.kind !== "environment") return;
       const record = environmentContextRecord(item.environmentId, item.label);
       const replacement = `${formatInlineContextReference(environmentContextReference(record))} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
@@ -2171,6 +2177,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
       });
       if (applied) {
+        environmentMentionRecents.remember(item.environmentId);
         addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
           appendReference: false,
         });

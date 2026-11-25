@@ -9,11 +9,8 @@ import {
   serializeAssistantCitation,
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
-import {
-  detectComposerPullRequestTrigger,
-  isCurrencyAmountQuery,
-  isPathWord,
-} from "@t3tools/shared/composerTrigger";
+import { detectEnvironmentMentionTrigger } from "./personal/environmentMentions";
+import { isCurrencyAmountQuery, isPathWord } from "@t3tools/shared/composerTrigger";
 import {
   splitPromptIntoComposerSegments,
   type ComposerPromptSegment,
@@ -25,7 +22,12 @@ import {
   type ShortcutMatchContext,
 } from "./keybindings";
 
-export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
+export type ComposerTriggerKind =
+  | "path"
+  | "environment"
+  | "pull-request"
+  | "slash-command"
+  | "skill";
 export type ComposerSlashCommand = "model" | "side" | "btw" | "clear";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
@@ -272,8 +274,8 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  const pullRequestTrigger = detectComposerPullRequestTrigger(token, cursor);
-  if (pullRequestTrigger) return pullRequestTrigger;
+  const environmentTrigger = detectEnvironmentMentionTrigger(token, cursor);
+  if (environmentTrigger) return environmentTrigger;
   const skillPrefix = /^\p{Sc}/u.exec(token);
   if (skillPrefix) {
     if (isCurrencyAmountQuery(token.slice(skillPrefix[0].length))) return null;
