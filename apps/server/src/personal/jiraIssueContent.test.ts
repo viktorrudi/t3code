@@ -60,7 +60,7 @@ describe("Jira issue content", () => {
 
   it("maps workflow context, bug fields, parent, subtasks and safe attachments without raw Jira metadata", () => {
     const result = jiraIssueContent({
-      names: { customfield_10209: "Steps to reproduce" },
+      names: { customfield_10209: "Postup" },
       fields: {
         description: { type: "doc", content: [paragraph("Expected result")] },
         project: { name: "RetuRO" },
@@ -107,9 +107,9 @@ describe("Jira issue content", () => {
       "is blocked by",
     ]);
     expect(result.jiraDetails.fields).toEqual([
-      { name: "Sprint", value: "Sprint 12" },
-      { name: "Story points", value: "0" },
-      { name: "Steps to reproduce", value: "Click Export" },
+      { id: "customfield_10020", name: "Sprint", value: "Sprint 12" },
+      { id: "customfield_10028", name: "Story points", value: "0" },
+      { id: "customfield_10209", name: "Postup", value: "Click Export" },
     ]);
     expect(JSON.stringify(result)).not.toContain("secret-url");
     expect(jiraIssueContent({ fields: {} }).body).toBe("");

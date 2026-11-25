@@ -143,7 +143,7 @@ export function jiraIssueContent(value: unknown): { body: string; jiraDetails: J
       }),
       fields: Object.entries(customNames).flatMap(([key, fallback]) => {
         const value = fieldValue(fields[key]).trim().slice(0, 40_000);
-        return value ? [{ name: text(fieldNames[key]) ?? fallback, value }] : [];
+        return value ? [{ id: key, name: text(fieldNames[key]) ?? fallback, value }] : [];
       }),
     },
   };

@@ -71,6 +71,16 @@ export interface JiraIssueComments {
   loadOlder: () => void;
 }
 
+const REPRODUCTION_FIELD_IDS = new Set([
+  "customfield_10209",
+  "customfield_10210",
+  "customfield_10211",
+  "customfield_10212",
+  "customfield_10081",
+]);
+// Older servers only send field names.
+const REPRODUCTION_FIELD = /reproduc|steps|actual|expected|acceptance|environment|user role/iu;
+
 function formatDueDate(value: string) {
   const date = new Date(/^\d{4}-\d{2}-\d{2}$/u.test(value) ? `${value}T00:00:00Z` : value);
   if (Number.isNaN(date.getTime())) return value;
@@ -380,6 +390,31 @@ export function JiraIssueDetail({
     onSelectIssue && key.split("-")[0]?.toUpperCase() === reference.scope.toUpperCase()
       ? () => onSelectIssue({ ...reference, key })
       : undefined;
+  const fields = jira?.fields ?? [];
+  const isReproductionField = (field: (typeof fields)[number]) =>
+    field.id !== undefined
+      ? REPRODUCTION_FIELD_IDS.has(field.id)
+      : REPRODUCTION_FIELD.test(field.name);
+  const reproductionFields = fields.filter(isReproductionField);
+  const otherFields = fields.filter((field) => !isReproductionField(field));
+  const detailCount =
+    (jira?.reporter ? 1 : 0) +
+    (issue.labels.length > 0 ? 1 : 0) +
+    ((jira?.components.length ?? 0) > 0 ? 1 : 0) +
+    (fixVersions.length > 0 ? 1 : 0) +
+    ((jira?.affectedVersions.length ?? 0) > 0 ? 1 : 0) +
+    (jira?.parent ? 1 : 0) +
+    otherFields.length;
+  const fieldList = (entries: typeof fields) => (
+    <dl className="grid grid-cols-[minmax(6rem,auto)_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2">
+      {entries.map((field) => (
+        <div key={field.id ?? field.name} className="contents">
+          <dt className="text-xs text-muted-foreground">{field.name}</dt>
+          <dd className="min-w-0 break-words whitespace-pre-line text-sm">{field.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
   const relative = (value: string) => formatRelativeTimeLabel(value, undefined, messages);
   const metaRow = (icon: ReactNode, label: string, values: ReadonlyArray<string>) =>
     values.length === 0 ? null : (
@@ -486,14 +521,6 @@ export function JiraIssueDetail({
                 )}
               </span>
             </PullRequestMetaRow>
-            {jira?.reporter ? (
-              <PullRequestMetaRow
-                icon={<UserRoundIcon className="size-3.5" />}
-                label={gt("Reporter")}
-              >
-                <PullRequestActorLabel actor={issueDisplayActor(issue.tracker, jira.reporter)} />
-              </PullRequestMetaRow>
-            ) : null}
             {jira?.priority ? (
               <PullRequestMetaRow icon={<FlagIcon className="size-3.5" />} label={gt("Priority")}>
                 {jira.priority}
@@ -502,42 +529,6 @@ export function JiraIssueDetail({
             {jira?.dueDate ? (
               <PullRequestMetaRow icon={<CalendarIcon className="size-3.5" />} label={gt("Due")}>
                 {formatDueDate(jira.dueDate)}
-              </PullRequestMetaRow>
-            ) : null}
-            {metaRow(
-              <TagIcon className="size-3.5" />,
-              gt("Labels"),
-              issue.labels.map((label) => label.name),
-            )}
-            {metaRow(<BoxesIcon className="size-3.5" />, gt("Components"), jira?.components ?? [])}
-            {metaRow(<MilestoneIcon className="size-3.5" />, gt("Fix versions"), fixVersions)}
-            {metaRow(
-              <MilestoneIcon className="size-3.5" />,
-              gt("Affects"),
-              jira?.affectedVersions ?? [],
-            )}
-            {jira?.parent ? (
-              <PullRequestMetaRow
-                icon={<CornerLeftUpIcon className="size-3.5" />}
-                label={gt("Parent")}
-              >
-                <InlineButton
-                  className="min-w-0 max-w-full"
-                  {...(openRelated(jira.parent.key)
-                    ? { onClick: openRelated(jira.parent.key) }
-                    : {
-                        render: (
-                          <a href={jira.parent.url} target="_blank" rel="noopener noreferrer" />
-                        ),
-                      })}
-                >
-                  <span className="flex min-w-0 items-baseline gap-1.5">
-                    <span className="shrink-0 tabular-nums text-muted-foreground">
-                      {jira.parent.key}
-                    </span>
-                    <span className="min-w-0 truncate">{jira.parent.title}</span>
-                  </span>
-                </InlineButton>
               </PullRequestMetaRow>
             ) : null}
           </div>
@@ -570,16 +561,69 @@ export function JiraIssueDetail({
           />
         </PullRequestSection>
 
-        {jira && jira.fields.length > 0 ? (
-          <PullRequestSection key={`fields:${issue.url}`} title={gt("Details")}>
-            <dl className="grid grid-cols-[minmax(6rem,auto)_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2">
-              {jira.fields.map((field) => (
-                <div key={field.name} className="contents">
-                  <dt className="text-xs text-muted-foreground">{field.name}</dt>
-                  <dd className="min-w-0 break-words whitespace-pre-line text-sm">{field.value}</dd>
-                </div>
-              ))}
-            </dl>
+        {reproductionFields.length > 0 ? (
+          <PullRequestSection key={`reproduction:${issue.url}`} title={gt("Reproduction")}>
+            {fieldList(reproductionFields)}
+          </PullRequestSection>
+        ) : null}
+
+        {detailCount > 0 ? (
+          <PullRequestSection
+            key={`details:${issue.url}`}
+            title={gt("Details ({count})", { count: detailCount })}
+            defaultOpen={false}
+          >
+            <div className="space-y-2">
+              {jira?.reporter ? (
+                <PullRequestMetaRow
+                  icon={<UserRoundIcon className="size-3.5" />}
+                  label={gt("Reporter")}
+                >
+                  <PullRequestActorLabel actor={issueDisplayActor(issue.tracker, jira.reporter)} />
+                </PullRequestMetaRow>
+              ) : null}
+              {metaRow(
+                <TagIcon className="size-3.5" />,
+                gt("Labels"),
+                issue.labels.map((label) => label.name),
+              )}
+              {metaRow(
+                <BoxesIcon className="size-3.5" />,
+                gt("Components"),
+                jira?.components ?? [],
+              )}
+              {metaRow(<MilestoneIcon className="size-3.5" />, gt("Fix versions"), fixVersions)}
+              {metaRow(
+                <MilestoneIcon className="size-3.5" />,
+                gt("Affects"),
+                jira?.affectedVersions ?? [],
+              )}
+              {jira?.parent ? (
+                <PullRequestMetaRow
+                  icon={<CornerLeftUpIcon className="size-3.5" />}
+                  label={gt("Parent")}
+                >
+                  <InlineButton
+                    className="min-w-0 max-w-full"
+                    {...(openRelated(jira.parent.key)
+                      ? { onClick: openRelated(jira.parent.key) }
+                      : {
+                          render: (
+                            <a href={jira.parent.url} target="_blank" rel="noopener noreferrer" />
+                          ),
+                        })}
+                  >
+                    <span className="flex min-w-0 items-baseline gap-1.5">
+                      <span className="shrink-0 tabular-nums text-muted-foreground">
+                        {jira.parent.key}
+                      </span>
+                      <span className="min-w-0 truncate">{jira.parent.title}</span>
+                    </span>
+                  </InlineButton>
+                </PullRequestMetaRow>
+              ) : null}
+            </div>
+            {otherFields.length > 0 ? <div className="mt-4">{fieldList(otherFields)}</div> : null}
           </PullRequestSection>
         ) : null}
 
@@ -587,6 +631,7 @@ export function JiraIssueDetail({
           <PullRequestSection
             key={`related:${issue.url}`}
             title={gt("Linked issues ({count})", { count: jira.relatedIssues.length })}
+            defaultOpen={false}
           >
             <div className="flex flex-col gap-0.5">
               {jira.relatedIssues.map((related) => (
@@ -608,6 +653,7 @@ export function JiraIssueDetail({
           <PullRequestSection
             key={`attachments:${issue.url}`}
             title={gt("Attachments ({count})", { count: jira.attachments.length })}
+            defaultOpen={false}
           >
             <div className="flex flex-col gap-0.5">
               {jira.attachments.map((attachment) => (

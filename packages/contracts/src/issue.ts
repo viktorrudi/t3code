@@ -242,7 +242,13 @@ export const JiraIssueContext = Schema.Struct({
       size: NonNegativeInt,
     }),
   ),
-  fields: Schema.Array(Schema.Struct({ name: Schema.String, value: Schema.String })),
+  fields: Schema.Array(
+    Schema.Struct({
+      id: Schema.optional(Schema.String),
+      name: Schema.String,
+      value: Schema.String,
+    }),
+  ),
 });
 export type JiraIssueContext = typeof JiraIssueContext.Type;
 
