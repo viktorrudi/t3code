@@ -13,12 +13,15 @@ export const readWorkingAgentCount = Effect.fn("HostResources.readWorkingAgentCo
       SELECT DISTINCT r.run_id, r.thread_id
       FROM orchestration_v2_projection_nodes n
         INDEXED BY orchestration_v2_projection_nodes_live_idx
-      JOIN orchestration_v2_projection_provider_turns pt ON pt.provider_turn_id = n.provider_turn_id
-      JOIN orchestration_v2_projection_run_attempts a ON a.attempt_id = pt.run_attempt_id
-      JOIN orchestration_v2_projection_runs r ON r.run_id = a.run_id
+      JOIN orchestration_v2_projection_runs r ON r.run_id = n.run_id
+      JOIN orchestration_v2_projection_run_attempts a
+        ON a.attempt_id = json_extract(r.payload_json, '$.activeAttemptId')
+          AND a.root_node_id = n.node_id
+      JOIN orchestration_v2_projection_provider_turns pt
+        ON pt.run_attempt_id = a.attempt_id
+          AND pt.provider_thread_id = a.provider_thread_id AND pt.node_id = n.node_id
       WHERE n.status IN ('pending', 'starting', 'running', 'waiting')
         AND pt.status = 'running' AND r.status = 'running'
-        AND json_extract(r.payload_json, '$.activeAttemptId') = a.attempt_id
         AND NOT EXISTS (
           SELECT 1 FROM orchestration_v2_projection_runtime_requests request
           WHERE request.thread_id = r.thread_id AND request.status = 'pending'
