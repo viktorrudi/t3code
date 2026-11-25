@@ -239,7 +239,7 @@ const make = Effect.fn("makeHostResources")(function* () {
   const cache = yield* Cache.make({
     capacity: 1,
     lookup: (_key: "host") => sample(),
-    timeToLive: "5 seconds",
+    timeToLive: "1 second",
   });
   return HostResources.of({ read: Cache.get(cache, "host") });
 });
