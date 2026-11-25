@@ -8,6 +8,23 @@ export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
 
 export const HostResourcesSnapshot = Schema.Struct({
   scope: Schema.optional(Schema.Literals(["host", "constrained"])),
+  disk: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        availableBytes: NonNegativeInt,
+        scope: Schema.Literal("t3-data-filesystem"),
+      }),
+    ),
+  ),
+  workingAgentCount: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  battery: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        percent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+        charging: Schema.NullOr(Schema.Boolean),
+      }),
+    ),
+  ),
   sampledAt: NonNegativeInt,
   cpuUtilization: Schema.NullOr(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
   cpuCount: NonNegativeInt,

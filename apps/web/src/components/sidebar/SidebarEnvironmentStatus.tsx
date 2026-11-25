@@ -8,7 +8,13 @@ import {
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useGT, useMessages } from "gt-react";
-import { CpuIcon, MemoryStickIcon } from "lucide-react";
+import {
+  BatteryChargingIcon,
+  BatteryIcon,
+  BotIcon,
+  HardDriveIcon,
+  MemoryStickIcon,
+} from "lucide-react";
 import { useContext, useState, useSyncExternalStore } from "react";
 
 import { useLiveRefresh } from "../../hooks/useLiveRefresh";
@@ -24,6 +30,7 @@ import {
   HOST_STATUS_REFRESH_MS,
   HOST_STATUS_STALE_MS,
   sidebarHostMetrics,
+  sidebarBattery,
 } from "./SidebarEnvironmentStatus.logic";
 
 const resourcesAtom = Atom.family((ids: string) =>
@@ -76,26 +83,38 @@ function EnvironmentStatus({
   const memory = metrics.memoryPercent === null ? unavailable : `${metrics.memoryPercent}%`;
   const status = connectionStatusText(environment.connection, messages);
   const freshness =
-    snapshot === null
-      ? gt("Host statistics unavailable")
-      : metrics.stale
-        ? gt("Stale · received {seconds}s ago", { seconds: metrics.ageSeconds })
-        : gt("Received {seconds}s ago", { seconds: metrics.ageSeconds });
+    snapshot === null ? gt("Statistics unavailable") : metrics.stale ? gt("Stale") : "";
   const scope =
-    snapshot?.scope === "host"
-      ? gt("Host resources")
-      : snapshot?.scope === "constrained"
-        ? gt("Effective resources: host and environment limits")
-        : gt("Resource scope unavailable");
+    snapshot?.scope === "constrained"
+      ? gt("RAM/CPU include environment limits")
+      : snapshot?.scope === undefined
+        ? gt("Resource scope unavailable")
+        : null;
+  const agents =
+    metrics.workingAgentCount === null ? unavailable : String(metrics.workingAgentCount);
+  const disk =
+    metrics.diskAvailableBytes === null ? unavailable : formatBytes(metrics.diskAvailableBytes);
+  const battery = sidebarBattery(snapshot, environment.serverConfig?.environment.platform.machine);
+  const Battery = battery?.charging === true ? BatteryChargingIcon : BatteryIcon;
+  const batteryLabel =
+    battery === null
+      ? ""
+      : battery.charging === true
+        ? gt("Battery: {percent}%, charging", { percent: battery.percent })
+        : gt("Battery: {percent}%", { percent: battery.percent });
   const label = connected
-    ? gt("{name}: {status}. CPU {cpu}, memory {memory}. {scope}. {freshness}", {
-        name: environment.label,
-        status,
-        cpu,
-        memory,
-        freshness,
-        scope,
-      })
+    ? gt(
+        "{name}: {status}. RAM {memory}, working agents {agents}, free disk {disk}. {freshness} {battery}",
+        {
+          name: environment.label,
+          status,
+          memory,
+          agents,
+          disk,
+          freshness,
+          battery: batteryLabel,
+        },
+      )
     : `${environment.label}: ${status}`;
   return (
     <Tooltip>
@@ -106,7 +125,7 @@ function EnvironmentStatus({
             tabIndex={0}
             aria-label={label}
             className={cn(
-              "inline-flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-sm px-1 text-xs tabular-nums outline-hidden hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+              "inline-flex min-h-7 max-w-full min-w-0 shrink-0 items-center gap-1.5 rounded-sm px-1 text-xs tabular-nums outline-hidden hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
               connected && !metrics.stale
                 ? "text-sidebar-foreground"
                 : "text-sidebar-muted-foreground",
@@ -121,12 +140,30 @@ function EnvironmentStatus({
         {connected ? (
           <span
             aria-hidden="true"
-            className="inline-flex items-center gap-1 group-data-[collapsible=icon]:hidden"
+            className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 group-data-[collapsible=icon]:hidden"
           >
-            <CpuIcon className="size-2.5 text-sidebar-muted-foreground" />
-            <span>{metrics.cpuPercent === null ? "?" : `${metrics.cpuPercent}%`}</span>
-            <MemoryStickIcon className="ml-0.5 size-2.5 text-sidebar-muted-foreground" />
-            <span>{metrics.memoryPercent === null ? "?" : `${metrics.memoryPercent}%`}</span>
+            <span className="inline-flex items-center gap-1 whitespace-nowrap">
+              <MemoryStickIcon className="size-2.5 text-sidebar-muted-foreground" />
+              <span>{metrics.memoryPercent === null ? "?" : `${metrics.memoryPercent}%`}</span>
+            </span>
+            <span className="inline-flex items-center gap-1 whitespace-nowrap">
+              <BotIcon className="size-2.5 text-sidebar-muted-foreground" />
+              <span>{metrics.workingAgentCount === null ? "?" : metrics.workingAgentCount}</span>
+            </span>
+            <span className="inline-flex items-center gap-1 whitespace-nowrap">
+              <HardDriveIcon className="size-2.5 text-sidebar-muted-foreground" />
+              <span>
+                {metrics.diskAvailableBytes === null
+                  ? "?"
+                  : formatBytes(metrics.diskAvailableBytes)}
+              </span>
+            </span>
+            {battery !== null ? (
+              <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                <Battery className="size-3 text-sidebar-muted-foreground" />
+                <span>{battery.percent}%</span>
+              </span>
+            ) : null}
             {metrics.stale ? <span className="text-warning">*</span> : null}
           </span>
         ) : null}
@@ -137,35 +174,16 @@ function EnvironmentStatus({
           <span className="text-muted-foreground">{status}</span>
           {connected ? (
             <>
-              <span className="text-muted-foreground">{scope}</span>
               <span>{gt("CPU: {cpu}", { cpu })}</span>
-              <span>{gt("Memory: {memory}", { memory })}</span>
-              {snapshot !== null ? (
-                <>
-                  <span>
-                    {gt("Sampled: {time}", {
-                      time: new Date(snapshot.sampledAt).toLocaleTimeString(),
-                    })}
-                  </span>
-                  <span>{gt("CPU cores: {count}", { count: snapshot.cpuCount })}</span>
-                  {metrics.memoryUsedBytes !== null ? (
-                    <span>
-                      {gt("Memory used: {used} / {total}", {
-                        used: formatBytes(metrics.memoryUsedBytes),
-                        total: formatBytes(snapshot.totalMemoryBytes),
-                      })}
-                    </span>
-                  ) : null}
-                  <span>
-                    {gt("Memory available: {available}", {
-                      available: formatBytes(snapshot.availableMemoryBytes),
-                    })}
-                  </span>
-                </>
+              <span>{gt("Working agents: {agents} (this T3 server)", { agents })}</span>
+              <span>{gt("Free disk: {disk} (server data volume)", { disk })}</span>
+              {battery !== null ? <span>{batteryLabel}</span> : null}
+              {scope !== null ? <span className="text-muted-foreground">{scope}</span> : null}
+              {freshness !== "" ? (
+                <span className={metrics.stale ? "text-warning" : "text-muted-foreground"}>
+                  {freshness}
+                </span>
               ) : null}
-              <span className={metrics.stale ? "text-warning" : "text-muted-foreground"}>
-                {freshness}
-              </span>
             </>
           ) : (
             <span className="text-muted-foreground">

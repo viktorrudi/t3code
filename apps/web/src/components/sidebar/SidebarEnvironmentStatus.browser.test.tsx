@@ -64,12 +64,19 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
     environment("primary", "connected"),
     environment("rudipc", "offline"),
     environment("older-peer", "connected"),
+    environment("legacy-peer", "connected"),
   ];
   const reads = vi.fn((id: string) =>
     id === "older-peer"
       ? AsyncResult.fail("Unsupported method")
       : AsyncResult.success({
           sampledAt: 123,
+          ...(id === "legacy-peer"
+            ? {}
+            : {
+                workingAgentCount: 2,
+                disk: { scope: "t3-data-filesystem" as const, availableBytes: 25 * 1024 ** 3 },
+              }),
           cpuUtilization: 0.25,
           cpuCount: 8,
           totalMemoryBytes: 16 * 1024 ** 3,
@@ -89,7 +96,9 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
     </RegistryContext>
   );
   await using screen = await render(ui());
-  const primary = screen.getByLabelText(/^primary: Connected\. CPU 25%, memory 75%/);
+  const primary = screen.getByLabelText(
+    /^primary: Connected\. RAM 75%, working agents 2, free disk 25.0 GB/,
+  );
   const offline = screen.getByLabelText("rudipc: Offline", { exact: true });
   await expect.element(primary).toBeVisible();
   await expect.element(offline).toBeVisible();
@@ -97,13 +106,20 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
     '[aria-label="Environment statistics"]',
   )!;
   expect(group.scrollWidth).toBeLessThanOrEqual(group.clientWidth);
-  expect(reads.mock.calls.map(([id]) => id)).toEqual(["older-peer", "primary"]);
+  expect(reads.mock.calls.map(([id]) => id)).toEqual(["legacy-peer", "older-peer", "primary"]);
+  await expect
+    .element(
+      screen.getByLabelText(
+        /^legacy-peer: Connected\. RAM 75%, working agents Unavailable, free disk Unavailable/,
+      ),
+    )
+    .toBeVisible();
   await userEvent.hover(primary);
-  await expect.element(page.getByText("Memory used: 12.0 GB / 16.0 GB")).toBeVisible();
+  await expect.element(page.getByText("CPU: 25%")).toBeVisible();
   await userEvent.unhover(primary);
   await userEvent.tab();
   await expect.element(primary).toHaveFocus();
-  await expect.element(page.getByText("CPU cores: 8")).toBeVisible();
+  await expect.element(page.getByText("Working agents: 2 (this T3 server)")).toBeVisible();
   await userEvent.tab();
   await expect.element(offline).toHaveFocus();
   await expect.element(page.getByText("Not connected; power state unknown")).toBeVisible();
@@ -115,7 +131,7 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
   await screen.rerender(ui());
   const pollCount = reads.mock.calls.length;
   await act(() => vi.advanceTimersByTimeAsync(10_000));
-  expect(reads.mock.calls.length).toBe(pollCount + 2);
+  expect(reads.mock.calls.length).toBe(pollCount + 3);
   expect(reads.mock.calls.some(([id]) => id === "rudipc")).toBe(false);
 
   using visible = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
