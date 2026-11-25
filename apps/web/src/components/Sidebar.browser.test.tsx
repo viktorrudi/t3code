@@ -226,6 +226,9 @@ it("toggles branch names and shows each Jira ticket on a card once", async () =>
   await expect.element(card.getByText("QA", { exact: true })).toBeVisible();
   await expect.element(legacyTicket).toBeVisible();
   expect(card.getByText("RET-123", { exact: true }).elements()).toHaveLength(1);
+  expect(
+    card.getByText("RET-123", { exact: true }).element().getBoundingClientRect().left,
+  ).toBeLessThan(branch.element().getBoundingClientRect().left);
   expect(jiraIssueAtom).not.toHaveBeenCalled();
 
   await userEvent.click(legacyTicket);

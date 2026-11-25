@@ -1326,6 +1326,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const displayedBranch = props.showBranch ? checkoutThread.branch : null;
   const showsWorktree = Boolean(checkoutThread.branch && checkoutThread.worktreePath?.trim());
   const jiraTickets = mergeThreadJiraTickets(tickets, thread.issues);
+  // A Jira ticket is the row's reference, so it leads the meta line; the native issue chip already
+  // names a dual-linked ticket, so it moves with the chips.
+  const ticketsLead = jiraTickets.length > 0;
   const ticketChips = (
     <ThreadTicketChips
       tickets={jiraTickets}
@@ -1350,6 +1353,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     runningTerminalIds.length === 0;
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+      {ticketsLead ? issueBadge : null}
+      {ticketsLead ? ticketChips : null}
       {showsWorktree ? <ThreadWorktreeIndicator thread={checkoutThread} /> : null}
       {displayedBranch ? (
         <span className="flex min-w-0 flex-1">
@@ -1369,8 +1374,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       )}
       {terminalStatusIcon}
       {prBadge}
-      {issueBadge}
-      {ticketChips}
+      {ticketsLead ? null : issueBadge}
       {diff ? (
         <span className="shrink-0 font-mono">
           <span className="text-diff-addition-foreground">+{formatDiffCount(diff.insertions)}</span>{" "}

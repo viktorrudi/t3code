@@ -5,7 +5,7 @@ import {
   type ThreadTicketDeploy,
 } from "@t3tools/contracts";
 
-export const JIRA_TRACKER_KIND = "jira";
+const JIRA_TRACKER_KIND = "jira";
 
 /**
  * One Jira ticket on a thread, however it was linked: the skill's annotation, a native thread
