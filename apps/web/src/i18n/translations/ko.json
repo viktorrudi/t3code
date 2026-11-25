@@ -11759,7 +11759,6 @@
   "12c6ce554c5f1891": "{name}: {status}. RAM {memory}, 작동 중인 에이전트 {agents}, 디스크 여유 공간 {disk}. CPU: {cpu}",
   "efc171d19a234c6f": "이전 T3",
   "eb942ddc5c3f2bb6": "CPU: {cpu}",
-  "f5a2ea972f6412ab": "RAM: {memory}",
   "503b1b75bf7d9bbd": "작업 중인 에이전트: {agents} (이 T3 서버)",
   "cd1018d11d464d8d": "디스크 여유 공간: {disk} (서버 데이터 볼륨)",
   "f022540a0dfe0d3a": "연결되지 않음. 전원 상태를 알 수 없음",

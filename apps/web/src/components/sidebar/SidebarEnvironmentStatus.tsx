@@ -106,6 +106,7 @@ function EnvironmentStatus({
     now,
     failed: result?._tag === "Failure",
   });
+  const loading = result === undefined || result._tag === "Initial";
   const unavailable = gt("Unavailable");
   const cpu = metrics.cpuPercent === null ? unavailable : `${metrics.cpuPercent}%`;
   const memory = metrics.memoryPercent === null ? unavailable : `${metrics.memoryPercent}%`;
@@ -214,7 +215,7 @@ function EnvironmentStatus({
               <MemoryStickIcon className="size-2.5 text-sidebar-muted-foreground" />
               {metrics.memoryPercent === null ? "–" : memory}
             </span>
-            {metrics.detailsAvailability !== null ? (
+            {metrics.detailsAvailability !== null && !loading ? (
               <span
                 aria-hidden="true"
                 className="col-start-3 col-end-5 row-start-2 min-w-0 truncate text-sidebar-muted-foreground group-data-[collapsible=icon]:hidden"
@@ -253,7 +254,6 @@ function EnvironmentStatus({
           {connected ? (
             <>
               <span>{gt("CPU: {cpu}", { cpu })}</span>
-              {collapsed ? <span>{gt("RAM: {memory}", { memory })}</span> : null}
               {metrics.detailsAvailability === null ? (
                 <>
                   <span>{gt("Working agents: {agents} (this T3 server)", { agents })}</span>

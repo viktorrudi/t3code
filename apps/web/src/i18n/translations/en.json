@@ -11822,7 +11822,6 @@
   "12c6ce554c5f1891": "{name}: {status}. RAM {memory}, working agents {agents}, free disk {disk}. CPU: {cpu}",
   "efc171d19a234c6f": "older T3",
   "eb942ddc5c3f2bb6": "CPU: {cpu}",
-  "f5a2ea972f6412ab": "RAM: {memory}",
   "503b1b75bf7d9bbd": "Working agents: {agents} (this T3 server)",
   "cd1018d11d464d8d": "Free disk: {disk} (server data volume)",
   "f022540a0dfe0d3a": "Not connected; power state unknown",

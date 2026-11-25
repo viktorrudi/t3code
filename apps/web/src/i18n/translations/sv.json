@@ -11820,7 +11820,6 @@
   "12c6ce554c5f1891": "{name}: {status}. RAM {memory}, aktiva agenter {agents}, ledigt diskutrymme {disk}. CPU: {cpu}",
   "efc171d19a234c6f": "äldre T3",
   "eb942ddc5c3f2bb6": "CPU: {cpu}",
-  "f5a2ea972f6412ab": "RAM: {memory}",
   "503b1b75bf7d9bbd": "Aktiva agenter: {agents} (denna T3-server)",
   "cd1018d11d464d8d": "Ledigt diskutrymme: {disk} (serverns datavolym)",
   "f022540a0dfe0d3a": "Inte ansluten; strömstatus okänd",

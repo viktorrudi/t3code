@@ -11812,7 +11812,6 @@
   "12c6ce554c5f1891": "{name} : {status}. RAM {memory}, agents actifs {agents}, espace libre {disk}. CPU : {cpu}",
   "efc171d19a234c6f": "ancien T3",
   "eb942ddc5c3f2bb6": "Processeur : {cpu}",
-  "f5a2ea972f6412ab": "RAM : {memory}",
   "503b1b75bf7d9bbd": "Agents actifs : {agents} (ce serveur T3)",
   "cd1018d11d464d8d": "Disque libre : {disk} (volume de données du serveur)",
   "f022540a0dfe0d3a": "Non connecté ; état d’alimentation inconnu",
