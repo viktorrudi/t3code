@@ -1,4 +1,11 @@
 import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect has no free-space query.
+import * as NodeFSP from "node:fs/promises";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as Schema from "effect/Schema";
+import * as ServerConfig from "../config.ts";
+import { readWorkingAgentCount } from "./HostResources.activity.ts";
+import { parseMacBattery } from "./HostResources.battery.ts";
 import type { HostResourcesSnapshot } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cache from "effect/Cache";
@@ -9,6 +16,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+
+class HostDiskReadError extends Schema.TaggedError<HostDiskReadError>()("HostDiskReadError", {
+  cause: Schema.Defect(),
+}) {}
 
 export class HostResources extends Context.Service<
   HostResources,
@@ -72,6 +83,8 @@ function cgroupNumber(text: string, pattern: RegExp): number | null {
 
 const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
+  const sql = yield* SqlClient.SqlClient;
+  const { stateDir } = yield* ServerConfig.ServerConfig;
   const platform = yield* HostProcess.Platform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
@@ -172,7 +185,49 @@ const make = Effect.fn("makeHostResources")(function* () {
         memoryMax - (memoryCurrent - reclaimable),
       );
     }
+    const [disk, workingAgentCount, battery] = yield* Effect.all([
+      Effect.tryPromise({
+        try: () => NodeFSP.statfs(stateDir),
+        catch: (cause) => new HostDiskReadError({ cause }),
+      }).pipe(
+        Effect.map((stats) => {
+          const availableBytes = stats.bavail * stats.bsize;
+          return Number.isSafeInteger(availableBytes) && availableBytes >= 0
+            ? { availableBytes, scope: "t3-data-filesystem" as const }
+            : null;
+        }),
+        Effect.timeout("1 second"),
+        Effect.orElseSucceed(() => null),
+      ),
+      readWorkingAgentCount().pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+        Effect.orElseSucceed(() => null),
+      ),
+      platform === "darwin"
+        ? spawner
+            .string(
+              ChildProcess.make("/usr/bin/pmset", ["-g", "batt"], {
+                stdin: "ignore",
+                stderr: "ignore",
+              }),
+            )
+            .pipe(
+              Effect.map(parseMacBattery),
+              Effect.timeout("1 second"),
+              Effect.orElseSucceed(() => null),
+            )
+        : Effect.succeed(null),
+    ]);
     return {
+      battery,
+      disk,
+      workingAgentCount,
+      scope:
+        cpuMax !== null ||
+        (allowedCpus !== null && cpu.count < NodeOS.cpus().length) ||
+        (memoryMax !== null && memoryCurrent !== null)
+          ? ("constrained" as const)
+          : ("host" as const),
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
       cpuCount,

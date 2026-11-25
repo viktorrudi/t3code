@@ -1,5 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import type * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Mocks the free-space API that Effect does not provide.
+import type * as NodeFSP from "node:fs/promises";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ServerConfig from "../config.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -13,7 +18,7 @@ import { vi } from "vite-plus/test";
 import * as HostResources from "./HostResources.ts";
 
 // An 8-CPU host; every cpus() call advances each CPU by 100 ms at `host.busy` utilization.
-const host = vi.hoisted(() => ({ busy: 0, reads: 0 }));
+const host = vi.hoisted(() => ({ busy: 0, reads: 0, diskFailure: false }));
 vi.mock("node:os", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeOS>();
   return {
@@ -32,9 +37,19 @@ vi.mock("node:os", async (importOriginal) => {
     },
   };
 });
+vi.mock("node:fs/promises", async (importOriginal) => ({
+  ...(await importOriginal<typeof NodeFSP>()),
+  statfs: async (directory: string) => {
+    if (host.diskFailure) throw new Error("Unavailable disk");
+    if (!directory.includes("t3-host-resources-") || !directory.endsWith("/userdata"))
+      throw new Error("Wrong destination filesystem");
+    return { bavail: 500, bsize: 4096 };
+  },
+}));
 const setup = (busy = 0) => {
   host.busy = busy;
   host.reads = 0;
+  host.diskFailure = false;
 };
 
 const GiB = 1024 ** 3;
@@ -56,6 +71,10 @@ const linuxHost = (files: Record<string, ReadonlyArray<string>>) => {
   return HostResources.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        ServerConfig.layerTest("/destination/project", { prefix: "t3-host-resources-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
+        SqlitePersistence.layerMemory,
         FileSystem.layerNoop({
           readFileString: (path) => {
             const values = files[path];
@@ -100,6 +119,7 @@ describe("HostResources.layer", () => {
       // One CPU of quota, 150 ms of it used during the 200 ms sample.
       assert.strictEqual(snapshot.cpuCount, 1);
       assert.strictEqual(snapshot.cpuUtilization, 0.75);
+      assert.strictEqual(snapshot.scope, "constrained");
     }).pipe(
       Effect.provide(
         linuxHost({
@@ -122,6 +142,7 @@ describe("HostResources.layer", () => {
       assert.strictEqual(snapshot.totalMemoryBytes, GiB);
       // 600 MiB charged, of which 100 MiB is reclaimable page cache.
       assert.strictEqual(snapshot.availableMemoryBytes, GiB - 500 * MiB);
+      assert.strictEqual(snapshot.scope, "constrained");
     }).pipe(
       Effect.provide(
         linuxHost({
@@ -158,6 +179,7 @@ describe("HostResources.layer", () => {
 
       assert.strictEqual(snapshot.cpuCount, 1);
       assert.strictEqual(snapshot.cpuUtilization, 1);
+      assert.strictEqual(snapshot.scope, "constrained");
     }).pipe(
       Effect.provide(
         linuxHost({
@@ -185,6 +207,7 @@ describe("HostResources.layer", () => {
 
       assert.strictEqual(snapshot.totalMemoryBytes, 4 * GiB);
       assert.strictEqual(snapshot.availableMemoryBytes, 2 * GiB);
+      assert.strictEqual(snapshot.scope, "host");
     }).pipe(
       Effect.provide(
         linuxHost({
@@ -202,8 +225,16 @@ describe("HostResources.layer", () => {
       const snapshot = yield* read;
 
       assert.strictEqual(snapshot.cpuCount, 8);
+      assert.strictEqual(snapshot.scope, "host");
+      assert.strictEqual(snapshot.workingAgentCount, 0);
+      assert.deepEqual(snapshot.disk, { availableBytes: 4096 * 500, scope: "t3-data-filesystem" });
       assert.closeTo(snapshot.cpuUtilization ?? Number.NaN, 0.25, 1e-9);
       assert.strictEqual(snapshot.availableMemoryBytes, 2 * GiB);
+      host.diskFailure = true;
+      yield* TestClock.adjust("5 seconds");
+      const unavailableDisk = yield* read;
+      assert.isNull(unavailableDisk.disk);
+      assert.strictEqual(unavailableDisk.workingAgentCount, 0);
     }).pipe(Effect.provide(linuxHost(unlimitedCgroup))),
   );
 
