@@ -29,15 +29,24 @@ export function sidebarHostMetrics(input: {
       : null;
   const count = snapshot?.workingAgentCount;
   const disk = snapshot?.disk;
+  const workingAgentCount =
+    typeof count === "number" && Number.isSafeInteger(count) && count >= 0 ? count : null;
+  const diskAvailableBytes =
+    disk?.scope === "t3-data-filesystem" &&
+    Number.isSafeInteger(disk.availableBytes) &&
+    disk.availableBytes >= 0
+      ? disk.availableBytes
+      : null;
+  const detailsAvailability =
+    workingAgentCount !== null || diskAvailableBytes !== null
+      ? null
+      : snapshot !== null && !failed && count === undefined && disk === undefined
+        ? "legacy"
+        : "unavailable";
   return {
-    workingAgentCount:
-      typeof count === "number" && Number.isSafeInteger(count) && count >= 0 ? count : null,
-    diskAvailableBytes:
-      disk?.scope === "t3-data-filesystem" &&
-      Number.isSafeInteger(disk.availableBytes) &&
-      disk.availableBytes >= 0
-        ? disk.availableBytes
-        : null,
+    workingAgentCount,
+    diskAvailableBytes,
+    detailsAvailability,
     ageSeconds,
     stale,
     cpuPercent,
@@ -58,4 +67,16 @@ export function sidebarBattery(
     battery.percent < 100
     ? { percent: Math.floor(battery.percent), charging: battery.charging }
     : null;
+}
+
+export function orderSidebarEnvironments<
+  T extends { readonly environmentId: string; readonly connection: { readonly phase: string } },
+>(environments: ReadonlyArray<T>, currentEnvironmentId: string | null): T[] {
+  const rank = (environment: T) =>
+    environment.environmentId === currentEnvironmentId
+      ? 0
+      : environment.connection.phase === "connected"
+        ? 1
+        : 2;
+  return [...environments].sort((a, b) => rank(a) - rank(b));
 }

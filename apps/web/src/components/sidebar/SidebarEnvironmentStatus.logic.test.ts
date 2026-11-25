@@ -1,7 +1,11 @@
 import type { HostResourcesSnapshot } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
-import { sidebarBattery, sidebarHostMetrics } from "./SidebarEnvironmentStatus.logic";
+import {
+  orderSidebarEnvironments,
+  sidebarBattery,
+  sidebarHostMetrics,
+} from "./SidebarEnvironmentStatus.logic";
 
 it("uses receipt time for freshness across machines and marks retained failed data stale", () => {
   const snapshot: HostResourcesSnapshot = {
@@ -64,7 +68,22 @@ it("distinguishes zero work and disk from unavailable legacy fields", () => {
   expect(sidebarHostMetrics(input)).toMatchObject({
     workingAgentCount: null,
     diskAvailableBytes: null,
+    detailsAvailability: "legacy",
   });
+  expect(sidebarHostMetrics({ ...input, failed: true }).detailsAvailability).toBe("unavailable");
+  expect(sidebarHostMetrics({ ...input, snapshot: null }).detailsAvailability).toBe("unavailable");
+  expect(
+    sidebarHostMetrics({
+      ...input,
+      snapshot: { ...legacy, workingAgentCount: null, disk: null },
+    }).detailsAvailability,
+  ).toBe("unavailable");
+  expect(
+    sidebarHostMetrics({
+      ...input,
+      snapshot: { ...legacy, workingAgentCount: 0 },
+    }),
+  ).toMatchObject({ workingAgentCount: 0, diskAvailableBytes: null, detailsAvailability: null });
   expect(
     sidebarHostMetrics({
       ...input,
@@ -96,4 +115,23 @@ it("shows battery only for a known laptop below full charge", () => {
   expect(
     sidebarBattery({ ...snapshot, battery: { percent: 0, charging: null } }, "laptop"),
   ).toEqual({ percent: 0, charging: null });
+});
+
+it("puts this computer first, then connected peers, retaining peer order without mutating the catalog", () => {
+  const environments = [
+    { environmentId: "offline", connection: { phase: "offline" } },
+    { environmentId: "first-peer", connection: { phase: "connected" } },
+    { environmentId: "local", connection: { phase: "offline" } },
+    { environmentId: "second-peer", connection: { phase: "connected" } },
+  ];
+  expect(
+    orderSidebarEnvironments(environments, "local").map((entry) => entry.environmentId),
+  ).toEqual(["local", "first-peer", "second-peer", "offline"]);
+  expect(orderSidebarEnvironments(environments, null).map((entry) => entry.environmentId)).toEqual([
+    "first-peer",
+    "second-peer",
+    "offline",
+    "local",
+  ]);
+  expect(environments[0]?.environmentId).toBe("offline");
 });

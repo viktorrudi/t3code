@@ -21,6 +21,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: mocks.environments }),
 }));
+vi.mock("../../state/primaryEnvironment", () => ({
+  localEnvironmentIdAtom: Atom.make(EnvironmentId.make("primary")),
+}));
+vi.mock("../../state/clientHostEnvironment", () => ({
+  clientHostEnvironmentAtom: Atom.family(() => Atom.make(true)),
+}));
 vi.mock("../ui/sidebar", () => ({
   SidebarMenuItem: ({ children, className }: { children: React.ReactNode; className?: string }) => (
     <li className={className}>{children}</li>
@@ -36,7 +42,10 @@ vi.mock("../../state/server", () => ({
   },
 }));
 
-function environment(id: string, phase: "connected" | "offline"): EnvironmentPresentation {
+function environment(
+  id: string,
+  phase: "connected" | "offline" | "connecting",
+): EnvironmentPresentation {
   return {
     environmentId: EnvironmentId.make(id),
     label: id,
@@ -97,7 +106,7 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
   );
   await using screen = await render(ui());
   const primary = screen.getByLabelText(
-    /^primary: Connected\. RAM 75%, working agents 2, free disk 25.0 GB/,
+    /^primary · This computer: Connected\. RAM 75%, working agents 2, free disk 25.0 GB\. CPU: 25%/,
   );
   const offline = screen.getByLabelText("rudipc: Offline", { exact: true });
   await expect.element(primary).toBeVisible();
@@ -121,6 +130,13 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
   await expect.element(primary).toHaveFocus();
   await expect.element(page.getByText("Working agents: 2 (this T3 server)")).toBeVisible();
   await userEvent.tab();
+  await expect.element(screen.getByLabelText(/^older-peer: Connected/)).toHaveFocus();
+  await expect.element(page.getByText("Statistics unavailable")).toBeVisible();
+  await userEvent.tab();
+  await expect
+    .element(page.getByText("Working agents and free disk need a newer T3 server."))
+    .toBeVisible();
+  await userEvent.tab();
   await expect.element(offline).toHaveFocus();
   await expect.element(page.getByText("Not connected; power state unknown")).toBeVisible();
 
@@ -143,8 +159,11 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
   await act(() => document.dispatchEvent(new Event("visibilitychange")));
   await expect.element(primary).toBeVisible();
 
-  mocks.environments = [environment("primary", "offline"), environment("rudipc", "offline")];
+  mocks.environments = [environment("primary", "connecting"), environment("rudipc", "offline")];
   await screen.rerender(ui());
+  await expect
+    .element(screen.getByLabelText("primary · This computer: Connecting...", { exact: true }))
+    .toBeVisible();
   const disconnectedCount = reads.mock.calls.length;
   await act(() => vi.advanceTimersByTimeAsync(30_000));
   expect(reads).toHaveBeenCalledTimes(disconnectedCount);
@@ -153,5 +172,7 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
   await expect.element(primary).toBeVisible();
   expect(reads.mock.calls.length).toBeGreaterThan(disconnectedCount);
   await act(() => vi.advanceTimersByTimeAsync(7 * 60_000));
-  await expect.element(screen.getByLabelText(/^primary: Connected\..*Stale/)).toBeVisible();
+  await expect
+    .element(screen.getByLabelText(/^primary · This computer: Connected\..*Stale/))
+    .toBeVisible();
 });

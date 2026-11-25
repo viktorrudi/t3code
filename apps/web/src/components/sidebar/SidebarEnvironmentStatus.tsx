@@ -1,8 +1,9 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import { connectionStatusText, connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import {
   resolveEnvironmentMachineKind,
   type EnvironmentId,
+  type EnvironmentMachineKind,
   type HostResourcesSnapshot,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -22,6 +23,8 @@ import { getDocumentActivity, subscribeDocumentActivity } from "../../lib/docume
 import { formatBytes } from "../../lib/formatBytes";
 import { cn } from "../../lib/utils";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
+import { clientHostEnvironmentAtom } from "../../state/clientHostEnvironment";
+import { localEnvironmentIdAtom } from "../../state/primaryEnvironment";
 import { serverEnvironment } from "../../state/server";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { SidebarMenuItem, useSidebar } from "../ui/sidebar";
@@ -31,6 +34,7 @@ import {
   HOST_STATUS_STALE_MS,
   sidebarHostMetrics,
   sidebarBattery,
+  orderSidebarEnvironments,
 } from "./SidebarEnvironmentStatus.logic";
 
 const resourcesAtom = Atom.family((ids: string) =>
@@ -57,14 +61,38 @@ const resourcesAtom = Atom.family((ids: string) =>
   }),
 );
 
+function SidebarMachineIcon({
+  kind,
+  current,
+}: {
+  readonly kind: EnvironmentMachineKind;
+  readonly current: boolean;
+}) {
+  return (
+    <span aria-hidden="true" className="relative grid size-4 shrink-0 place-items-center">
+      <EnvironmentMachineIcon
+        kind={kind}
+        className={kind === "server" || kind === "desktop" ? "size-3" : "size-3.5"}
+      />
+      {current ? (
+        <span className="absolute -right-0.5 -bottom-0.5 size-1.25 rounded-full bg-primary ring-1 ring-sidebar" />
+      ) : null}
+    </span>
+  );
+}
+
 function EnvironmentStatus({
   environment,
   result,
   now,
+  current,
+  collapsed,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly result: AsyncResult.AsyncResult<HostResourcesSnapshot, unknown> | undefined;
   readonly now: number;
+  readonly current: boolean;
+  readonly collapsed: boolean;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -82,6 +110,12 @@ function EnvironmentStatus({
   const cpu = metrics.cpuPercent === null ? unavailable : `${metrics.cpuPercent}%`;
   const memory = metrics.memoryPercent === null ? unavailable : `${metrics.memoryPercent}%`;
   const status = connectionStatusText(environment.connection, messages);
+  const disconnectedStatus =
+    environment.connection.phase === "connecting" ||
+    environment.connection.phase === "available" ||
+    environment.connection.awaitingApproval
+      ? connectionStatusTitle(environment.connection, messages)
+      : gt("Offline");
   const freshness =
     snapshot === null ? gt("Statistics unavailable") : metrics.stale ? gt("Stale") : "";
   const scope =
@@ -102,20 +136,35 @@ function EnvironmentStatus({
       : battery.charging === true
         ? gt("Battery: {percent}%, charging", { percent: battery.percent })
         : gt("Battery: {percent}%", { percent: battery.percent });
+  const currentLabel = current
+    ? environment.serverConfig?.environment.platform.os === "darwin"
+      ? gt("This Mac")
+      : gt("This computer")
+    : null;
+  const name = currentLabel === null ? environment.label : `${environment.label} · ${currentLabel}`;
+  const detailsNote =
+    metrics.detailsAvailability === "legacy"
+      ? gt("Working agents and free disk need a newer T3 server.")
+      : gt("Working agents and free disk are unavailable.");
   const label = connected
-    ? gt(
-        "{name}: {status}. RAM {memory}, working agents {agents}, free disk {disk}. {freshness} {battery}",
-        {
-          name: environment.label,
-          status,
-          memory,
-          agents,
-          disk,
-          freshness,
-          battery: batteryLabel,
-        },
-      )
-    : `${environment.label}: ${status}`;
+    ? [
+        gt(
+          "{name}: {status}. RAM {memory}, working agents {agents}, free disk {disk}. CPU: {cpu}",
+          {
+            name,
+            status,
+            memory,
+            agents,
+            disk,
+            cpu,
+          },
+        ),
+        freshness,
+        batteryLabel,
+      ]
+        .filter(Boolean)
+        .join(". ")
+    : `${name}: ${disconnectedStatus}`;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -125,7 +174,8 @@ function EnvironmentStatus({
             tabIndex={0}
             aria-label={label}
             className={cn(
-              "inline-flex min-h-7 max-w-full min-w-0 shrink-0 items-center gap-1.5 rounded-sm px-1 text-xs tabular-nums outline-hidden hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+              "col-span-full min-h-7 min-w-0 items-center gap-x-1.5 gap-y-0.5 rounded-sm px-1 py-1 text-xs tabular-nums outline-hidden hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center",
+              connected ? "grid grid-cols-subgrid" : "flex",
               connected && !metrics.stale
                 ? "text-sidebar-foreground"
                 : "text-sidebar-muted-foreground",
@@ -133,50 +183,85 @@ function EnvironmentStatus({
           />
         }
       >
-        <EnvironmentMachineIcon
+        <SidebarMachineIcon
           kind={resolveEnvironmentMachineKind(environment.serverConfig)}
-          className="size-3.5 shrink-0"
+          current={current}
         />
-        {connected ? (
-          <span
-            aria-hidden="true"
-            className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 group-data-[collapsible=icon]:hidden"
-          >
-            <span className="inline-flex items-center gap-1 whitespace-nowrap">
-              <MemoryStickIcon className="size-2.5 text-sidebar-muted-foreground" />
-              <span>{metrics.memoryPercent === null ? "?" : `${metrics.memoryPercent}%`}</span>
-            </span>
-            <span className="inline-flex items-center gap-1 whitespace-nowrap">
-              <BotIcon className="size-2.5 text-sidebar-muted-foreground" />
-              <span>{metrics.workingAgentCount === null ? "?" : metrics.workingAgentCount}</span>
-            </span>
-            <span className="inline-flex items-center gap-1 whitespace-nowrap">
-              <HardDriveIcon className="size-2.5 text-sidebar-muted-foreground" />
-              <span>
-                {metrics.diskAvailableBytes === null
-                  ? "?"
-                  : formatBytes(metrics.diskAvailableBytes)}
-              </span>
-            </span>
-            {battery !== null ? (
-              <span className="inline-flex items-center gap-1 whitespace-nowrap">
-                <Battery className="size-3 text-sidebar-muted-foreground" />
-                <span>{battery.percent}%</span>
-              </span>
-            ) : null}
-            {metrics.stale ? <span className="text-warning">*</span> : null}
+        <span
+          aria-hidden="true"
+          className={cn(
+            "flex min-w-0 items-center gap-1.5 group-data-[collapsible=icon]:hidden",
+            connected ? "col-start-2 col-end-5 row-start-1" : "flex-1",
+          )}
+        >
+          <span className={cn("truncate", current && "font-medium")}>
+            {currentLabel ?? environment.label}
           </span>
-        ) : null}
+          {connected && battery !== null ? (
+            <span className="ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-sidebar-muted-foreground">
+              <Battery className="size-3" />
+              {battery.percent}%
+            </span>
+          ) : null}
+          {connected && metrics.stale ? <span className="text-warning">*</span> : null}
+        </span>
+        {connected ? (
+          <>
+            <span
+              aria-hidden="true"
+              className="col-start-2 row-start-2 inline-flex items-center gap-1 whitespace-nowrap group-data-[collapsible=icon]:hidden"
+            >
+              <MemoryStickIcon className="size-2.5 text-sidebar-muted-foreground" />
+              {metrics.memoryPercent === null ? "–" : memory}
+            </span>
+            {metrics.detailsAvailability !== null ? (
+              <span
+                aria-hidden="true"
+                className="col-start-3 col-end-5 row-start-2 min-w-0 truncate text-sidebar-muted-foreground group-data-[collapsible=icon]:hidden"
+              >
+                {metrics.detailsAvailability === "legacy" ? gt("older T3") : unavailable}
+              </span>
+            ) : (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="col-start-3 row-start-2 inline-flex items-center gap-1 whitespace-nowrap group-data-[collapsible=icon]:hidden"
+                >
+                  <BotIcon className="size-2.5 text-sidebar-muted-foreground" />
+                  {metrics.workingAgentCount === null ? "–" : agents}
+                </span>
+                <span
+                  aria-hidden="true"
+                  className="col-start-4 row-start-2 inline-flex items-center gap-1 whitespace-nowrap group-data-[collapsible=icon]:hidden"
+                >
+                  <HardDriveIcon className="size-2.5 text-sidebar-muted-foreground" />
+                  {metrics.diskAvailableBytes === null ? "–" : disk}
+                </span>
+              </>
+            )}
+          </>
+        ) : (
+          <span aria-hidden="true" className="shrink-0 group-data-[collapsible=icon]:hidden">
+            {disconnectedStatus}
+          </span>
+        )}
       </TooltipTrigger>
-      <TooltipPopup side="top" align="start">
+      <TooltipPopup side={collapsed ? "right" : "top"} align="start">
         <div className="grid gap-1 py-1">
-          <span className="font-medium">{environment.label}</span>
+          <span className="font-medium">{name}</span>
           <span className="text-muted-foreground">{status}</span>
           {connected ? (
             <>
               <span>{gt("CPU: {cpu}", { cpu })}</span>
-              <span>{gt("Working agents: {agents} (this T3 server)", { agents })}</span>
-              <span>{gt("Free disk: {disk} (server data volume)", { disk })}</span>
+              {collapsed ? <span>{gt("RAM: {memory}", { memory })}</span> : null}
+              {metrics.detailsAvailability === null ? (
+                <>
+                  <span>{gt("Working agents: {agents} (this T3 server)", { agents })}</span>
+                  <span>{gt("Free disk: {disk} (server data volume)", { disk })}</span>
+                </>
+              ) : snapshot !== null ? (
+                <span className="text-muted-foreground">{detailsNote}</span>
+              ) : null}
               {battery !== null ? <span>{batteryLabel}</span> : null}
               {scope !== null ? <span className="text-muted-foreground">{scope}</span> : null}
               {freshness !== "" ? (
@@ -199,6 +284,10 @@ function EnvironmentStatus({
 export function SidebarEnvironmentStatus() {
   const gt = useGT();
   const { environments } = useEnvironments();
+  const localEnvironmentId = useAtomValue(localEnvironmentIdAtom);
+  const clientHost = useAtomValue(clientHostEnvironmentAtom(localEnvironmentId));
+  const currentEnvironmentId = clientHost ? localEnvironmentId : null;
+  const orderedEnvironments = orderSidebarEnvironments(environments, currentEnvironmentId);
   const { isMobile, openMobile, state } = useSidebar();
   const activity = useSyncExternalStore(
     subscribeDocumentActivity,
@@ -238,12 +327,14 @@ export function SidebarEnvironmentStatus() {
       <div
         role="group"
         aria-label={gt("Environment statistics")}
-        className="flex min-w-0 flex-wrap items-center gap-x-1"
+        className="grid min-w-0 grid-cols-[1rem_auto_auto_minmax(0,1fr)] gap-x-1.5 group-data-[collapsible=icon]:grid-cols-1"
       >
-        {environments.map((environment) => (
+        {orderedEnvironments.map((environment) => (
           <EnvironmentStatus
             key={environment.environmentId}
             environment={environment}
+            current={environment.environmentId === currentEnvironmentId}
+            collapsed={!isMobile && state === "collapsed"}
             result={
               resources.find((resource) => resource.environmentId === environment.environmentId)
                 ?.result
