@@ -315,7 +315,7 @@ export function SidebarEnvironmentStatus() {
       enabled: visible && ids !== "",
       key: "sidebar-host-resources",
       intervalMs: HOST_STATUS_REFRESH_MS,
-      minimumIntervalMs: HOST_STATUS_REFRESH_MS,
+      minimumIntervalMs: 1_500,
       refreshWhileIdle: true,
       refreshOnShow: true,
     },
