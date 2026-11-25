@@ -1,6 +1,6 @@
 import type { EnvironmentMachineKind, HostResourcesSnapshot } from "@t3tools/contracts";
 
-export const HOST_STATUS_REFRESH_MS = 10_000;
+export const HOST_STATUS_REFRESH_MS = 2_000;
 export const HOST_STATUS_STALE_MS = 30_000;
 
 export function sidebarHostMetrics(input: {

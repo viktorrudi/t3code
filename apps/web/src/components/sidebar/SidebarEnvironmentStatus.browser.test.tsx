@@ -115,7 +115,9 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
     '[aria-label="Environment statistics"]',
   )!;
   expect(group.scrollWidth).toBeLessThanOrEqual(group.clientWidth);
-  expect(reads.mock.calls.map(([id]) => id)).toEqual(["legacy-peer", "older-peer", "primary"]);
+  expect(new Set(reads.mock.calls.map(([id]) => id))).toEqual(
+    new Set(["legacy-peer", "older-peer", "primary"]),
+  );
   await expect
     .element(
       screen.getByLabelText(
@@ -143,12 +145,45 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
   mocks.sidebarState = "collapsed";
   await screen.rerender(ui());
   using _timers = fakeTimers();
+  const collapsedCount = reads.mock.calls.length;
+  await act(() => vi.advanceTimersByTimeAsync(4_000));
+  expect(reads).toHaveBeenCalledTimes(collapsedCount);
   mocks.sidebarState = "expanded";
   await screen.rerender(ui());
+  await act(() => vi.advanceTimersByTimeAsync(200));
+  const { serverEnvironment } = await import("../../state/server");
+  await act(() =>
+    registry.refresh(
+      serverEnvironment.hostResources({ environmentId: EnvironmentId.make("primary"), input: {} }),
+    ),
+  );
   const pollCount = reads.mock.calls.length;
-  await act(() => vi.advanceTimersByTimeAsync(10_000));
+  await act(() => vi.advanceTimersByTimeAsync(1_800));
   expect(reads.mock.calls.length).toBe(pollCount + 3);
   expect(reads.mock.calls.some(([id]) => id === "rudipc")).toBe(false);
+
+  mocks.read = (id) => {
+    const result = reads(id);
+    return id === "primary" && result._tag === "Success"
+      ? AsyncResult.success(result.value, { waiting: true })
+      : result;
+  };
+  await act(() =>
+    registry.refresh(
+      serverEnvironment.hostResources({ environmentId: EnvironmentId.make("primary"), input: {} }),
+    ),
+  );
+  const pendingReads = reads.mock.calls.filter(([id]) => id === "primary").length;
+  const otherReads = reads.mock.calls.filter(([id]) => id === "legacy-peer").length;
+  await act(() => vi.advanceTimersByTimeAsync(4_000));
+  expect(reads.mock.calls.filter(([id]) => id === "primary")).toHaveLength(pendingReads);
+  expect(reads.mock.calls.filter(([id]) => id === "legacy-peer")).toHaveLength(otherReads + 2);
+  mocks.read = reads;
+  await act(() =>
+    registry.refresh(
+      serverEnvironment.hostResources({ environmentId: EnvironmentId.make("primary"), input: {} }),
+    ),
+  );
 
   using visible = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
   await act(() => document.dispatchEvent(new Event("visibilitychange")));
@@ -171,8 +206,9 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
   await screen.rerender(ui());
   await expect.element(primary).toBeVisible();
   expect(reads.mock.calls.length).toBeGreaterThan(disconnectedCount);
+  const beforeIdle = reads.mock.calls.length;
   await act(() => vi.advanceTimersByTimeAsync(7 * 60_000));
-  await expect
-    .element(screen.getByLabelText(/^primary · This computer: Connected\..*Stale/))
-    .toBeVisible();
+  await expect.element(primary).toBeVisible();
+  expect(primary.element().getAttribute("aria-label")).not.toContain("Stale");
+  expect(reads.mock.calls.length).toBeGreaterThan(beforeIdle);
 });

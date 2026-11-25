@@ -52,7 +52,7 @@ const resourcesAtom = Atom.family((ids: string) =>
         )
         .filter((expiry) => expiry > evaluatedAt),
     );
-    // One expiry for the group keeps retained values honest when live refresh pauses for idle.
+    // One expiry for the group keeps retained values honest when live refresh pauses.
     if (Number.isFinite(nextExpiry)) {
       const timer = setTimeout(() => get.refreshSelf(), nextExpiry - evaluatedAt);
       get.addFinalizer(() => clearTimeout(timer));
@@ -175,8 +175,8 @@ function EnvironmentStatus({
             tabIndex={0}
             aria-label={label}
             className={cn(
-              "col-span-full min-h-7 min-w-0 items-center gap-x-1.5 gap-y-0.5 rounded-sm px-1 py-1 text-xs tabular-nums outline-hidden hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center",
-              connected ? "grid grid-cols-subgrid" : "flex",
+              "flex min-h-7 min-w-0 items-center gap-x-1.5 gap-y-0.5 rounded-sm px-1 py-1 text-xs tabular-nums outline-hidden hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset group-data-[collapsible=icon]:flex-nowrap group-data-[collapsible=icon]:justify-center",
+              connected && "flex-wrap",
               connected && !metrics.stale
                 ? "text-sidebar-foreground"
                 : "text-sidebar-muted-foreground",
@@ -184,63 +184,61 @@ function EnvironmentStatus({
           />
         }
       >
-        <SidebarMachineIcon
-          kind={resolveEnvironmentMachineKind(environment.serverConfig)}
-          current={current}
-        />
-        <span
-          aria-hidden="true"
-          className={cn(
-            "flex min-w-0 items-center gap-1.5 group-data-[collapsible=icon]:hidden",
-            connected ? "col-start-2 col-end-5 row-start-1" : "flex-1",
-          )}
-        >
-          <span className={cn("truncate", current && "font-medium")}>
+        <span className="flex min-w-0 max-w-full grow basis-auto items-center gap-1.5 group-data-[collapsible=icon]:grow-0">
+          <SidebarMachineIcon
+            kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+            current={current}
+          />
+          <span
+            aria-hidden="true"
+            className={cn(
+              "min-w-0 truncate group-data-[collapsible=icon]:hidden",
+              current && "font-medium",
+            )}
+          >
             {currentLabel ?? environment.label}
           </span>
           {connected && battery !== null ? (
-            <span className="ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-sidebar-muted-foreground">
+            <span
+              aria-hidden="true"
+              className="ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-sidebar-muted-foreground group-data-[collapsible=icon]:hidden"
+            >
               <Battery className="size-3" />
               {battery.percent}%
             </span>
           ) : null}
-          {connected && metrics.stale ? <span className="text-warning">*</span> : null}
+          {connected && metrics.stale ? (
+            <span aria-hidden="true" className="text-warning group-data-[collapsible=icon]:hidden">
+              *
+            </span>
+          ) : null}
         </span>
         {connected ? (
-          <>
-            <span
-              aria-hidden="true"
-              className="col-start-2 row-start-2 inline-flex items-center gap-1 whitespace-nowrap group-data-[collapsible=icon]:hidden"
-            >
+          <span
+            aria-hidden="true"
+            className="ml-auto flex min-w-0 max-w-full shrink-0 basis-full items-center justify-end gap-1.5 @min-[14rem]/sidebar-machines:basis-auto group-data-[collapsible=icon]:hidden"
+          >
+            <span className="inline-flex items-center gap-1 whitespace-nowrap">
               <MemoryStickIcon className="size-2.5 text-sidebar-muted-foreground" />
               {metrics.memoryPercent === null ? "–" : memory}
             </span>
             {metrics.detailsAvailability !== null && !loading ? (
-              <span
-                aria-hidden="true"
-                className="col-start-3 col-end-5 row-start-2 min-w-0 truncate text-sidebar-muted-foreground group-data-[collapsible=icon]:hidden"
-              >
+              <span className="min-w-0 truncate text-sidebar-muted-foreground">
                 {metrics.detailsAvailability === "legacy" ? gt("older T3") : unavailable}
               </span>
             ) : (
               <>
-                <span
-                  aria-hidden="true"
-                  className="col-start-3 row-start-2 inline-flex items-center gap-1 whitespace-nowrap group-data-[collapsible=icon]:hidden"
-                >
+                <span className="inline-flex items-center gap-1 whitespace-nowrap">
                   <BotIcon className="size-2.5 text-sidebar-muted-foreground" />
                   {metrics.workingAgentCount === null ? "–" : agents}
                 </span>
-                <span
-                  aria-hidden="true"
-                  className="col-start-4 row-start-2 inline-flex items-center gap-1 whitespace-nowrap group-data-[collapsible=icon]:hidden"
-                >
+                <span className="inline-flex items-center gap-1 whitespace-nowrap">
                   <HardDriveIcon className="size-2.5 text-sidebar-muted-foreground" />
                   {metrics.diskAvailableBytes === null ? "–" : disk}
                 </span>
               </>
             )}
-          </>
+          </span>
         ) : (
           <span aria-hidden="true" className="shrink-0 group-data-[collapsible=icon]:hidden">
             {disconnectedStatus}
@@ -310,15 +308,16 @@ export function SidebarEnvironmentStatus() {
       for (const { query } of resources) {
         const result = registry.get(query);
         if (result.waiting || result._tag === "Initial") continue;
-        if (result._tag !== "Success" || time - result.timestamp >= HOST_STATUS_REFRESH_MS) {
-          registry.refresh(query);
-        }
+        registry.refresh(query);
       }
     },
     {
       enabled: visible && ids !== "",
       key: "sidebar-host-resources",
       intervalMs: HOST_STATUS_REFRESH_MS,
+      minimumIntervalMs: HOST_STATUS_REFRESH_MS,
+      refreshWhileIdle: true,
+      refreshOnShow: true,
     },
   );
   if (environments.length === 0) return null;
@@ -327,7 +326,7 @@ export function SidebarEnvironmentStatus() {
       <div
         role="group"
         aria-label={gt("Environment statistics")}
-        className="grid min-w-0 grid-cols-[1rem_auto_auto_minmax(0,1fr)] gap-x-1.5 group-data-[collapsible=icon]:grid-cols-1"
+        className="@container/sidebar-machines grid min-w-0 grid-cols-1"
       >
         {orderedEnvironments.map((environment) => (
           <EnvironmentStatus

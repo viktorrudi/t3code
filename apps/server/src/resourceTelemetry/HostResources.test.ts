@@ -222,7 +222,15 @@ describe("HostResources.layer", () => {
   it.effect("keeps host values when the cgroup has no limits", () =>
     Effect.gen(function* () {
       setup(0.25);
-      const snapshot = yield* read;
+      const service = yield* HostResources.HostResources;
+      const pending = yield* Effect.forkChild(
+        Effect.all([service.read, service.read], { concurrency: "unbounded" }),
+      );
+      yield* TestClock.adjust("200 millis");
+      const [snapshot, concurrent] = yield* Fiber.join(pending);
+      assert.strictEqual(snapshot, concurrent);
+      assert.strictEqual(host.reads, 2);
+      assert.strictEqual(yield* service.read, snapshot);
 
       assert.strictEqual(snapshot.cpuCount, 8);
       assert.strictEqual(snapshot.scope, "host");
@@ -230,8 +238,14 @@ describe("HostResources.layer", () => {
       assert.deepEqual(snapshot.disk, { availableBytes: 4096 * 500, scope: "t3-data-filesystem" });
       assert.closeTo(snapshot.cpuUtilization ?? Number.NaN, 0.25, 1e-9);
       assert.strictEqual(snapshot.availableMemoryBytes, 2 * GiB);
+      host.busy = 0.75;
+      yield* TestClock.adjust("1 second");
+      const fresh = yield* read;
+      assert.notStrictEqual(fresh, snapshot);
+      assert.closeTo(fresh.cpuUtilization ?? Number.NaN, 0.75, 1e-9);
+      assert.strictEqual(host.reads, 4);
       host.diskFailure = true;
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("1 second");
       const unavailableDisk = yield* read;
       assert.isNull(unavailableDisk.disk);
       assert.strictEqual(unavailableDisk.workingAgentCount, 0);
