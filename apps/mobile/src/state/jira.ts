@@ -7,6 +7,7 @@ import { WS_METHODS, type EnvironmentId, type ThreadTicketAnnotations } from "@t
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { formatEnvironmentQueryError } from "./query";
 import { environmentServerConfigsAtom } from "./server";
 
 export const jira = {
@@ -42,13 +43,26 @@ export const jira = {
   }),
 };
 
+export type JiraAnnotationState = {
+  readonly status: "unsupported" | "loading" | "error" | "ready";
+  readonly threads: ThreadTicketAnnotations["threads"];
+  readonly error?: string;
+};
+
 export const jiraThreadAnnotationsAtom = Atom.make((get) => {
-  const annotations = new Map<EnvironmentId, ThreadTicketAnnotations["threads"]>();
+  const annotations = new Map<EnvironmentId, JiraAnnotationState>();
   for (const [environmentId, config] of get(environmentServerConfigsAtom)) {
-    if (config.environment.capabilities.jiraThreadLinks !== true) continue;
+    if (config.environment.capabilities.jiraThreadLinks !== true) {
+      annotations.set(environmentId, { status: "unsupported", threads: {} });
+      continue;
+    }
     const result = get(jira.threadTickets({ environmentId, input: {} }));
     const snapshot = AsyncResult.getOrElse(result, () => null);
-    if (snapshot) annotations.set(environmentId, snapshot.threads);
+    annotations.set(environmentId, {
+      status: result._tag === "Failure" ? "error" : snapshot ? "ready" : "loading",
+      threads: snapshot?.threads ?? {},
+      ...(result._tag === "Failure" ? { error: formatEnvironmentQueryError(result.cause) } : {}),
+    });
   }
   return annotations;
 }).pipe(Atom.withLabel("mobile:jira:thread-annotations"));

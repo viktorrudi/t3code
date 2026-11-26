@@ -7,7 +7,13 @@ import {
   SENSONEO_JIRA_HOST,
   type ProjectId,
   type ThreadId,
+  type ThreadIssueLink,
 } from "@t3tools/contracts";
+import {
+  jiraTicketIssueTarget,
+  mergeThreadJiraTickets,
+} from "@t3tools/client-runtime/thread-jira-tickets";
+import { Linking } from "react-native";
 import { AsyncResult } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import { useGT } from "gt-react-native";
@@ -33,6 +39,7 @@ export function useThreadJiraMenu(
     readonly environmentId: EnvironmentId;
     readonly projectId: ProjectId;
     readonly id: ThreadId;
+    readonly issues?: ReadonlyArray<ThreadIssueLink>;
   } | null,
 ): AppBarMenu | null {
   const gt = useGT();
@@ -50,10 +57,11 @@ export function useThreadJiraMenu(
     supported ? jira.threadTickets({ environmentId, input: {} }) : null,
   );
   const releaseItems = useJiraWorkMenu(environmentId, connected);
-  if (!supported || !thread) return null;
+  if (!thread) return null;
   const { id: threadId, projectId } = thread;
-  const tickets = ticketsQuery.data?.threads[threadId] ?? [];
+  const tickets = mergeThreadJiraTickets(ticketsQuery.data?.threads[threadId] ?? [], thread.issues);
   const canLink =
+    supported &&
     mayLink &&
     project &&
     /\/sensoneo\/(?:frontend|test-composer\/test-composer)\/?$/u.test(project.workspaceRoot);
@@ -91,7 +99,7 @@ export function useThreadJiraMenu(
     title: ticket.key,
     subtitle: ticket.deploy?.label,
     items: [
-      ...(config.environment.capabilities.issues === true
+      ...(config?.environment.capabilities.issues === true
         ? [
             {
               id: "open-issue",
@@ -100,19 +108,23 @@ export function useThreadJiraMenu(
               onPress: () =>
                 navigation.dispatch(
                   StackActions.push("Issue", {
+                    ...jiraTicketIssueTarget(ticket, projectId),
                     environmentId,
-                    projectId,
-                    tracker: "jira",
-                    host: SENSONEO_JIRA_HOST,
-                    scope: ticket.key.split("-")[0]!,
                     issueKey: ticket.key,
                   }),
                 ),
             },
           ]
-        : []),
-      ...releaseItems(ticket.key, ticket.deploy),
-      ...(canLink
+        : [
+            {
+              id: "open-issue",
+              title: gt("Open issue"),
+              icon: "arrow.up.right",
+              onPress: () => void Linking.openURL(ticket.url),
+            },
+          ]),
+      ...(supported ? releaseItems(ticket.key, ticket.deploy) : []),
+      ...(canLink && ticket.annotated
         ? [
             {
               id: "unlink",
@@ -160,7 +172,17 @@ export function useThreadJiraMenu(
   return {
     title: gt("Jira tickets"),
     icon: "tag",
-    ...(first ? { status: [first.key, first.deploy?.label].filter(Boolean).join(" · ") } : {}),
+    ...(first
+      ? {
+          status: [
+            first.key,
+            first.deploy?.assign?.current ?? first.deploy?.target?.release,
+            first.deploy?.label,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        }
+      : {}),
     items: linkItem ? [...items, linkItem] : items,
   };
 }

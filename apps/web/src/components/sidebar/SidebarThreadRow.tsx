@@ -136,7 +136,7 @@ import { useThreadTickets } from "../../state/threadTickets";
 import {
   jiraTicketIssueTarget,
   mergeThreadJiraTickets,
-} from "../threadTickets/threadJiraTickets.logic";
+} from "@t3tools/client-runtime/thread-jira-tickets";
 import { ActivityShimmerOverlay } from "../chat/TimelineRowParts";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";

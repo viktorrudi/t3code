@@ -13,6 +13,7 @@ const JIRA_TRACKER_KIND = "jira";
  */
 export interface ThreadJiraTicket {
   key: string;
+  flag?: string;
   host: string;
   url: string;
   /** The native link, which opens the issue under its own project. */
@@ -52,6 +53,7 @@ export function mergeThreadJiraTickets(
     seen.add(id);
     merged.push({
       key: ticket.key,
+      ...(ticket.flag ? { flag: ticket.flag } : {}),
       host,
       url: ticket.url,
       link: native.get(id) ?? null,

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { IssueTrackerKind, ProjectId, type ThreadIssueLink } from "@t3tools/contracts";
 
-import { jiraTicketIssueTarget, mergeThreadJiraTickets } from "./threadJiraTickets.logic";
+import { jiraTicketIssueTarget, mergeThreadJiraTickets } from "./threadJiraTickets.ts";
 
 function link(key: string, overrides: Partial<ThreadIssueLink> = {}): ThreadIssueLink {
   return {

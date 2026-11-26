@@ -1,3 +1,4 @@
+import { ThreadTicketChips } from "./ThreadTicketChips";
 import * as Schema from "effect/Schema";
 import {
   eventSnoozeAllowed,
@@ -842,7 +843,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozeSupported: boolean;
   readonly snoozePresets: ReadonlyArray<SnoozePresetSetting> | undefined;
   readonly eventSnooze?: { readonly rules: EventSnoozeRules; readonly jiraConfigured: boolean };
-  readonly jiraTicket?: ThreadTicket;
+  readonly jiraTickets?: ReadonlyArray<ThreadTicket>;
   readonly pinningSupported: boolean;
   readonly autoSettleOptOutSupported: boolean;
   readonly titleRegenerationSupported: boolean;
@@ -1386,7 +1387,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         Dialog.prompt({
           title: gt("Until a Jira comment"),
           message: gt("Enter a ticket key, such as RET-1234."),
-          initialValue: props.jiraTicket?.key ?? "",
+          initialValue: props.jiraTickets?.[0]?.key ?? "",
           confirmText: gt("Snooze"),
           onConfirm: (value) => {
             const condition = { kind: "jira" as const, issueKey: value.trim().toUpperCase() };
@@ -1424,7 +1425,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       eventPrLinks,
       jiraSnoozeAllowed,
       props.eventSnooze?.jiraConfigured,
-      props.jiraTicket?.key,
+      props.jiraTickets,
       onSnoozeThread,
       thread,
       navigation,
@@ -1655,6 +1656,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           )}
         </View>
       </View>
+      <ThreadTicketChips thread={thread} annotations={props.jiraTickets} inset={titleTextInset} />
       {props.searchMatch ? (
         <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
           <ThreadSearchMatchExcerpt
@@ -1708,21 +1710,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : (
           <View className="flex-1" />
         )}
-        {props.jiraTicket ? (
-          <Text
-            className={cn(
-              "max-w-40 shrink rounded-md bg-card px-1.5 py-0.5 text-xs",
-              selected
-                ? selectedThreadRowColors.mutedForegroundClassName
-                : rowAppearance.tertiaryForegroundClassName,
-            )}
-            numberOfLines={1}
-          >
-            {[props.jiraTicket.flag, props.jiraTicket.key, props.jiraTicket.deploy?.label]
-              .filter(Boolean)
-              .join(" ")}
-          </Text>
-        ) : null}
         {pr ? (
           <Pressable
             // Padding cancelled by negative margin grows the touch target into

@@ -8,10 +8,13 @@ export function sidebarHostMetrics(input: {
   readonly receivedAt: number;
   readonly now: number;
   readonly failed: boolean;
+  readonly staleAfterMs?: number;
 }) {
   const { snapshot, receivedAt, now, failed } = input;
   const ageSeconds = Math.max(0, Math.floor((now - receivedAt) / 1_000));
-  const stale = snapshot !== null && (failed || now - receivedAt >= HOST_STATUS_STALE_MS);
+  const stale =
+    snapshot !== null &&
+    (failed || now - receivedAt >= (input.staleAfterMs ?? HOST_STATUS_STALE_MS));
   const cpu = snapshot?.cpuUtilization;
   const cpuPercent =
     cpu !== null && cpu !== undefined && Number.isFinite(cpu) && cpu >= 0 && cpu <= 1

@@ -134,6 +134,44 @@ pairing QR from your T3 server. Each app maintains its own saved environments.
 The fork uses direct server connections. Its local installs have Expo updates
 and T3 Connect turned off.
 
+Personal notifications use the standalone hub in `scripts/push-hub`. The hub
+runs on the always-on Agents Mac and connects to each environment with its own
+read-only pairing session. The production APNs key stays on that Mac. Phone
+alerts require the TestFlight build; the direct-device build uses development
+signing and does not register with the production hub.
+
+Build the hub with `cd apps/mobile/scripts/push-hub && vp pack`. Copy the resulting
+`.t3/push-hub/main.mjs` to the hub's private directory outside the repository.
+Use Node 24 or newer. Its `config.json` specifies `directory`, `publicOrigin`,
+`port`, `apns` (`keyPath`, `keyId`, `teamId`, `bundleId`) and `environments`
+(`environmentId`, `name`, `origin`, `credentialPath`). Keep the directory mode
+700 and credentials mode 600. Serve its loopback port through a separate
+Tailscale HTTPS port, preserving the existing T3 route.
+
+For each environment, create a fresh `t3 pair --scope orchestration:read` token
+and save it to a private temporary file. Run
+`node main.mjs pair /absolute/config.json <environment-id> /absolute/token-file`,
+then remove the temporary file. Use pairing-link tokens, since desktop and CLI
+bootstrap credentials do not create renewable sessions. Revoking the session in
+that environment's Connections settings stops hub access.
+
+`install.sh <absolute-node-path> <absolute-hub-directory>` installs the user's
+LaunchAgent. It starts at login and restarts after failures; keep that user logged
+in and the Mac awake. To stop it, run
+`launchctl bootout gui/$(id -u)/com.viktorrudi.t3-personal-push`.
+`node main.mjs status /absolute/config.json` reads the last connection and delivery
+health. A stale `checkedAt` means the service is not reporting.
+
+Run `node main.mjs invite /absolute/config.json` to create a private, one-use
+phone invitation that expires in 15 minutes. In the app, open Settings,
+Notifications, Connect notifications and paste the invitation URL. Response
+previews can be disabled there; titles still pass through Apple. Disconnect
+notifications removes that phone from the hub. Delivery requires the hub and
+the relevant environment online; recent completions during reconnect gaps are
+recovered for up to one hour. Rebuild and redeploy the hub when upgrading the
+environments so its bundled protocol matches them. APNs delivery still needs
+a real locked-phone test.
+
 #### Private updates through TestFlight
 
 Use the same Apple team and bundle ID for every build. In App Store Connect,

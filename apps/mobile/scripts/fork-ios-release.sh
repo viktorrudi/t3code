@@ -50,7 +50,7 @@ case "${1:-}" in
     git merge-base --is-ancestor "$upstream_sha" "$source_sha" || fail "$upstream_tag has not been integrated into this checkout."
     latest_integrated_tag=$(git tag --merged "$source_sha" --sort=-version:refname | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ && !found { print; found=1 }')
     [[ $upstream_tag == "$latest_integrated_tag" ]] || fail "Use the checkout's latest integrated stable tag, $latest_integrated_tag."
-    export T3CODE_IOS_FORK=1 T3CODE_IOS_PERSONAL_TEAM=0 APP_VARIANT=production EXPO_NO_GIT_STATUS=1
+    export T3CODE_IOS_FORK=1 T3CODE_IOS_FORK_DEVICE_BUILD=0 T3CODE_IOS_PERSONAL_TEAM=0 APP_VARIANT=production EXPO_NO_GIT_STATUS=1
     export EXPO_PUBLIC_SHOWCASE=0 T3_SHOWCASE_CAPTURE_BUILD=0
     export T3CODE_IOS_FORK_TEAM_ID=${T3CODE_IOS_FORK_TEAM_ID:?Set the Apple Developer team ID}
     team_id=$T3CODE_IOS_FORK_TEAM_ID

@@ -13,6 +13,7 @@ process.env.EXPO_NO_TYPESCRIPT_SETUP = "1";
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
 const isIosFork = repoEnv.T3CODE_IOS_FORK === "1";
+const isIosForkDeviceBuild = isIosFork && repoEnv.T3CODE_IOS_FORK_DEVICE_BUILD === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
@@ -166,7 +167,7 @@ const notificationsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   {
     icon: variant.assets.androidNotificationIcon,
     color: variant.assets.androidNotificationColor,
-    mode: APP_VARIANT === "development" ? "development" : "production",
+    mode: APP_VARIANT === "development" || isIosForkDeviceBuild ? "development" : "production",
   },
 ];
 
@@ -409,7 +410,7 @@ const config: ExpoConfig = {
     ...(isIosPersonalTeamBuild
       ? [sharingPlugin]
       : ["./plugins/withShareExtensionDisplayName.cjs", sharingPlugin]),
-    ...(isIosFork ? [] : [notificationsPlugin]),
+    notificationsPlugin,
     // Gate Clerk here: withoutIosPersonalTeamCapabilities runs too early to strip its entitlement.
     ...(isIosFork ? [] : [clerkPlugin]),
     "expo-web-browser",
@@ -509,16 +510,17 @@ const config: ExpoConfig = {
     "./plugins/withAndroidTabletOrientation.cjs",
     ...(isIosPersonalTeamBuild || isIosFork
       ? [
-          ["./plugins/withoutIosPersonalTeamCapabilities.cjs", { keepAppGroups: isIosFork }] as [
-            string,
-            object,
-          ],
+          [
+            "./plugins/withoutIosPersonalTeamCapabilities.cjs",
+            { keepAppGroups: isIosFork, keepPush: isIosFork },
+          ] as [string, object],
         ]
       : []),
   ],
   extra: {
     appVariant: APP_VARIANT,
     iosFork: isIosFork,
+    iosForkProductionPush: isIosFork && APP_VARIANT === "production" && !isIosForkDeviceBuild,
     secretsFeatureEnabled: ["1", "true"].includes(
       process.env.T3CODE_FEATURE_SECRETS?.trim().toLowerCase() ?? "",
     ),

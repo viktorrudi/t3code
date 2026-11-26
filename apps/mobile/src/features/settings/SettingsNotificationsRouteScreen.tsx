@@ -1,3 +1,5 @@
+import { personalPushAvailable } from "../personal-push/registration";
+import { PersonalPushSettings } from "../personal-push/PersonalPushSettings";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg, useGT, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
@@ -189,6 +191,7 @@ function useNotificationsReady(): boolean {
 
 export function SettingsNotificationsRouteScreen() {
   const gt = useGT();
+  if (personalPushAvailable) return <PersonalPushSettings />;
   if (!hasCloudPublicConfig()) {
     return (
       <SettingsScreen title={gt("Notifications")}>

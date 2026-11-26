@@ -37,7 +37,7 @@ import {
   jiraTicketIssueTarget,
   mergeThreadJiraTickets,
   type ThreadJiraTicket,
-} from "./threadJiraTickets.logic";
+} from "@t3tools/client-runtime/thread-jira-tickets";
 
 /**
  * The thread's Jira tickets as one compact entry: a menu to open each in Issues or Jira, copy its

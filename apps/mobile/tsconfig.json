@@ -15,7 +15,7 @@
         "overrides": [
           {
             "include": [
-              "scripts/*.ts",
+              "scripts/**/*.ts",
               "scripts/*.mts",
               "fingerprint.config.js",
               "**/*.test.ts",

@@ -35,7 +35,7 @@ import {
   sidebarHostMetrics,
   sidebarBattery,
   orderSidebarEnvironments,
-} from "./SidebarEnvironmentStatus.logic";
+} from "@t3tools/client-runtime/environment-status";
 import { SidebarEnvironmentHistory } from "./SidebarEnvironmentHistory";
 import {
   EMPTY_RESOURCE_HISTORY,

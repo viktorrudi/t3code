@@ -1,3 +1,4 @@
+import { EnvironmentOverview } from "./EnvironmentOverview";
 import { useGT, useMessages } from "gt-react-native";
 
 import { useContentTopInset } from "../../components/ui/useBarInset";
@@ -598,7 +599,7 @@ export function HomeScreen(props: HomeScreenProps) {
         snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
         snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
         eventSnooze={eventSnoozeByEnvironmentId.get(thread.environmentId)}
-        jiraTicket={jiraThreadAnnotations.get(thread.environmentId)?.[thread.id]?.[0]}
+        jiraTickets={jiraThreadAnnotations.get(thread.environmentId)?.threads[thread.id]}
         pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
         autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
         reorderSupported={
@@ -823,20 +824,23 @@ export function HomeScreen(props: HomeScreenProps) {
                 // Lifted above the rows so an iOS filter menu's dismissal morph is not covered.
                 ListHeaderComponentStyle={{ zIndex: 1 }}
                 ListFooterComponent={
-                  settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
-                    <ThreadListV2ShowMoreRow
-                      hiddenCount={threadListV2Layout.hiddenSettledCount}
-                      {...(olderSettledShelf.loading
-                        ? { state: "loading" as const }
-                        : olderSettledShelf.failed
-                          ? { state: "failed" as const }
-                          : {})}
-                      onPress={() => {
-                        olderSettledShelf.retry();
-                        showMoreSettled();
-                      }}
-                    />
-                  ) : null
+                  <>
+                    {settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
+                      <ThreadListV2ShowMoreRow
+                        hiddenCount={threadListV2Layout.hiddenSettledCount}
+                        {...(olderSettledShelf.loading
+                          ? { state: "loading" as const }
+                          : olderSettledShelf.failed
+                            ? { state: "failed" as const }
+                            : {})}
+                        onPress={() => {
+                          olderSettledShelf.retry();
+                          showMoreSettled();
+                        }}
+                      />
+                    ) : null}
+                    <EnvironmentOverview />
+                  </>
                 }
                 ListEmptyComponent={v2ListEmpty}
                 style={{ flex: 1 }}

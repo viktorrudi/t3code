@@ -5,7 +5,7 @@ import {
   orderSidebarEnvironments,
   sidebarBattery,
   sidebarHostMetrics,
-} from "./SidebarEnvironmentStatus.logic";
+} from "./environmentStatus.ts";
 
 it("uses receipt time for freshness across machines and marks retained failed data stale", () => {
   const snapshot: HostResourcesSnapshot = {

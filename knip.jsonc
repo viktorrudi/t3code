@@ -118,6 +118,8 @@
         "fingerprint.config.js",
         "plugins/*.cjs",
         "scripts/generate-device-stream.mts",
+        "scripts/push-hub/main.ts",
+        "scripts/push-hub/vite.config.ts",
         "src/features/devices/device-stream.browser.ts!",
         "src/features/browser/preview-stream.browser.ts!",
       ],

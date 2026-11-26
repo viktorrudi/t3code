@@ -1,3 +1,4 @@
+import { EnvironmentOverview } from "../home/EnvironmentOverview";
 import { useGT, useMessages } from "gt-react-native";
 import { useActiveNewTask } from "../../state/active-new-task";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
@@ -492,7 +493,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
             snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
             eventSnooze={eventSnoozeByEnvironmentId.get(thread.environmentId)}
-            jiraTicket={jiraThreadAnnotations.get(thread.environmentId)?.[thread.id]?.[0]}
+            jiraTickets={jiraThreadAnnotations.get(thread.environmentId)?.threads[thread.id]}
             pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
             autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
             reorderSupported={
@@ -673,6 +674,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListFooterComponent={<EnvironmentOverview visible={props.visible} />}
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
@@ -726,6 +728,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListFooterComponent={<EnvironmentOverview visible={props.visible} />}
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>

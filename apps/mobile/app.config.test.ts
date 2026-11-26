@@ -11,6 +11,7 @@ vi.mock("../../scripts/lib/public-config.ts", () => ({
       [
         "APP_VARIANT",
         "T3CODE_IOS_FORK",
+        "T3CODE_IOS_FORK_DEVICE_BUILD",
         "T3CODE_IOS_FORK_BUNDLE_ID",
         "T3CODE_IOS_FORK_TEAM_ID",
         "T3CODE_RELAY_URL",
@@ -71,6 +72,7 @@ it.each([
   const config = await loadConfig(variant, true);
   const id = `com.example.personal${suffix}`;
   expect(config.platforms).toEqual(["ios"]);
+  expect(config.extra?.iosForkProductionPush).toBe(variant === "production");
   expect(config.scheme).toBe(scheme);
   expect(config.ios?.bundleIdentifier).toBe(id);
   expect(config.ios?.appleTeamId).toBe("ABCDEFGHIJ");
@@ -94,6 +96,18 @@ it.each([
       }),
     }),
   ]);
+  expect(config.plugins).toContainEqual([
+    "expo-notifications",
+    expect.objectContaining({ mode: variant === "development" ? "development" : "production" }),
+  ]);
+  expect(config.plugins).toContainEqual([
+    "./plugins/withoutIosPersonalTeamCapabilities.cjs",
+    { keepAppGroups: true, keepPush: true },
+  ]);
+  expect(config.plugins).toContainEqual([
+    "expo-widgets",
+    expect.objectContaining({ enablePushNotifications: false }),
+  ]);
   expect(config.updates).toEqual({ enabled: false });
   expect(config.owner).toBeUndefined();
   expect(config.extra?.eas.projectId).toBeUndefined();
@@ -107,4 +121,14 @@ it("rejects an upstream app identifier for a fork build", async () => {
   await expect(loadConfig("production", true)).rejects.toThrow(
     "Use a separate reverse-DNS bundle ID",
   );
+});
+
+it("keeps direct-device builds on development APNs without enabling the production hub", async () => {
+  vi.stubEnv("T3CODE_IOS_FORK_DEVICE_BUILD", "1");
+  const config = await loadConfig("production", true);
+  expect(config.extra?.iosForkProductionPush).toBe(false);
+  expect(config.plugins).toContainEqual([
+    "expo-notifications",
+    expect.objectContaining({ mode: "development" }),
+  ]);
 });

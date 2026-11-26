@@ -7,7 +7,7 @@ import { Badge } from "../ui/badge";
 import { InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { DeployTargetMenu } from "./DeployTargetMenu";
-import type { ThreadJiraTicket } from "./threadJiraTickets.logic";
+import type { ThreadJiraTicket } from "@t3tools/client-runtime/thread-jira-tickets";
 
 const DEPLOY_BADGE_VARIANT = {
   success: "success",

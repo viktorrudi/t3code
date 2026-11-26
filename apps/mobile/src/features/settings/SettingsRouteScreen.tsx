@@ -1,3 +1,4 @@
+import { personalPushAvailable } from "../personal-push/registration";
 import {
   navigationCustomizationAvailable,
   overflowNavigationTabs,
@@ -149,7 +150,19 @@ function LocalSettingsRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   return (
     <SettingsList
-      connections={[environmentsRow(gt("Environments"), Object.keys(savedConnectionsById).length)]}
+      connections={[
+        environmentsRow(gt("Environments"), Object.keys(savedConnectionsById).length),
+        ...(personalPushAvailable
+          ? [
+              {
+                id: "SettingsNotifications",
+                icon: "bell.badge" as const,
+                label: gt("Notifications"),
+                target: "SettingsNotifications" as const,
+              },
+            ]
+          : []),
+      ]}
     />
   );
 }
