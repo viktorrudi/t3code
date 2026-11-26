@@ -1316,15 +1316,26 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     )
   ) : null;
 
+  const diff = latestRunDiff(thread);
+  const displayedBranch = props.showBranch ? checkoutThread.branch : null;
+  const showsWorktree = Boolean(checkoutThread.branch && checkoutThread.worktreePath?.trim());
+  // The third line is for references (tickets, issues, PRs) and opted-in branch text. Glyphs that
+  // only identify the checkout, machine or provider trail the title instead.
+  const metaLineEmpty =
+    !displayedBranch && prBadge === null && tickets.length === 0 && issueBadge === null;
+  const showsScratchLabel = showsScratchMachine && !metaLineEmpty;
   const remoteMachineIcon =
-    isRemote && !showsScratchMachine ? (
+    (isRemote || showsScratchMachine) && !showsScratchLabel ? (
       <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
         <EnvironmentMachineIcon aria-hidden kind={props.environmentMachine} className="size-3.5" />
       </span>
     ) : null;
-  const diff = latestRunDiff(thread);
-  const displayedBranch = props.showBranch ? checkoutThread.branch : null;
-  const showsWorktree = Boolean(checkoutThread.branch && checkoutThread.worktreePath?.trim());
+  const diffCount = diff ? (
+    <span className="shrink-0 font-mono text-xs">
+      <span className="text-diff-addition-foreground">+{formatDiffCount(diff.insertions)}</span>{" "}
+      <span className="text-diff-deletion-foreground">−{formatDiffCount(diff.deletions)}</span>
+    </span>
+  ) : null;
   const jiraTickets = mergeThreadJiraTickets(tickets, thread.issues);
   // A Jira ticket is the row's reference, so it leads the meta line; the native issue chip already
   // names a dual-linked ticket, so it moves with the chips.
@@ -1341,26 +1352,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       }}
     />
   );
-  // Only the trailing icons would remain, so the row moves them to the title line instead.
-  const metaLineEmpty =
-    !displayedBranch &&
-    !showsWorktree &&
-    !showsScratchMachine &&
-    prBadge === null &&
-    tickets.length === 0 &&
-    issueBadge === null &&
-    diff === null &&
-    runningTerminalIds.length === 0;
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-      {ticketsLead ? issueBadge : null}
-      {ticketsLead ? ticketChips : null}
+      {ticketsLead ? (
+        // Clips the release chips, not the machine and provider glyphs, on a narrow sidebar.
+        <span className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+          {issueBadge}
+          {ticketChips}
+        </span>
+      ) : null}
       {showsWorktree ? <ThreadWorktreeIndicator thread={checkoutThread} /> : null}
       {displayedBranch ? (
         <span className="flex min-w-0 flex-1">
           <MiddleTruncate value={displayedBranch} showTitle={false} />
         </span>
-      ) : showsScratchMachine ? (
+      ) : showsScratchLabel ? (
         <>
           <EnvironmentMachineIcon
             aria-hidden
@@ -1375,12 +1381,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       {terminalStatusIcon}
       {prBadge}
       {ticketsLead ? null : issueBadge}
-      {diff ? (
-        <span className="shrink-0 font-mono">
-          <span className="text-diff-addition-foreground">+{formatDiffCount(diff.insertions)}</span>{" "}
-          <span className="text-diff-deletion-foreground">−{formatDiffCount(diff.deletions)}</span>
-        </span>
-      ) : null}
+      {diffCount}
       <span
         aria-hidden
         className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
@@ -1394,12 +1395,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     </div>
   );
   const titleLineIcons = metaLineEmpty ? (
-    <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
-      {remoteMachineIcon}
-      <SidebarProviderStack
-        thread={thread}
-        providerEntryByInstanceId={props.providerEntryByInstanceId}
-      />
+    <span className="inline-flex shrink-0 items-center gap-1.5 text-secondary-label">
+      {showsWorktree ? <ThreadWorktreeIndicator thread={checkoutThread} /> : null}
+      {terminalStatusIcon}
+      {diffCount}
+      <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
+        {remoteMachineIcon}
+        <SidebarProviderStack
+          thread={thread}
+          providerEntryByInstanceId={props.providerEntryByInstanceId}
+        />
+      </span>
     </span>
   ) : null;
 
