@@ -142,6 +142,10 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
   await userEvent.click(primary);
   await userEvent.unhover(primary);
   await expect.element(primary).toHaveAttribute("aria-expanded", "true");
+  await userEvent.hover(screen.getByLabelText(/^legacy-peer: Connected/));
+  await expect.element(details("primary · This computer")).toBeVisible();
+  await expect.element(details("legacy-peer")).not.toBeInTheDocument();
+  await userEvent.unhover(screen.getByLabelText(/^legacy-peer: Connected/));
   await userEvent.click(primary);
   await userEvent.unhover(primary);
   await expect.element(primary).toHaveAttribute("aria-expanded", "false");

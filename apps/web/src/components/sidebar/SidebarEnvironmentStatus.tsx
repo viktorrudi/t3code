@@ -412,7 +412,7 @@ export function SidebarEnvironmentStatus() {
     },
   );
   if (environments.length === 0) return null;
-  const expandedId = active ?? pinned;
+  const expandedId = pinned ?? active;
   return (
     <SidebarMenuItem className="min-w-0 basis-full">
       <div
