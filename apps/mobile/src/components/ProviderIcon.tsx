@@ -11,12 +11,18 @@ import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./ui/AppText";
 import { cn } from "../lib/cn";
-import { getProviderClient, openRouterIcon } from "@t3tools/client-runtime/provider-clients";
+import {
+  getProviderClient,
+  openRouterIcon,
+  providerInstanceBrandIcon,
+} from "@t3tools/client-runtime/provider-clients";
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
   readonly iconUrl?: string | null | undefined;
   readonly size?: number;
+  /** The instance's public name, which can name a brand its driver does not (LiteLLM). */
+  readonly displayName?: string | undefined;
 };
 
 function AcpRegistryFallbackIcon(props: { readonly color: string; readonly size: number }) {
@@ -74,8 +80,10 @@ export function ProviderIcon(props: ProviderIconProps) {
   const gradientId = useId();
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
+  const brandIcon =
+    props.displayName === undefined ? null : providerInstanceBrandIcon(props.displayName);
 
-  if (props.provider?.trim().toLowerCase() === "antigravity") {
+  if (brandIcon === null && props.provider?.trim().toLowerCase() === "antigravity") {
     return (
       <Image
         source={require("../../assets/antigravity.png")}
@@ -84,11 +92,11 @@ export function ProviderIcon(props: ProviderIconProps) {
       />
     );
   }
-  if (props.provider === "acpRegistry") {
+  if (brandIcon === null && props.provider === "acpRegistry") {
     return <AcpRegistryProviderIcon color={mono} iconUrl={props.iconUrl} size={size} />;
   }
 
-  if (props.provider === "claudeAgent") {
+  if (brandIcon === null && props.provider === "claudeAgent") {
     return (
       <Svg width={size} height={size} viewBox="0 0 256 257" fill="none">
         <Path
@@ -100,7 +108,8 @@ export function ProviderIcon(props: ProviderIconProps) {
   }
 
   const packageIcon =
-    props.provider === "openrouter" ? openRouterIcon : getProviderClient(props.provider)?.icon;
+    brandIcon ??
+    (props.provider === "openrouter" ? openRouterIcon : getProviderClient(props.provider)?.icon);
   if (packageIcon) {
     const themeFill = (fill: { readonly light: string; readonly dark: string }) =>
       isDarkMode ? fill.dark : fill.light;
@@ -161,6 +170,7 @@ export function providerInstanceNameLabel(props: {
   readonly showBadge: boolean;
 }): string | null {
   return props.showBadge &&
+    providerInstanceBrandIcon(props.displayName) === null &&
     props.provider === "acpRegistry" &&
     resolveOfficialAcpRegistryIconUrl(props.iconUrl) === null
     ? props.displayName
@@ -177,12 +187,18 @@ export function ProviderInstanceIcon(props: {
   readonly surfaceColor?: string;
 }) {
   const accentColor = normalizeProviderAccentColor(props.accentColor);
+  const showBadge = props.showBadge && providerInstanceBrandIcon(props.displayName) === null;
   return (
     <View style={{ position: "relative" }}>
       <View style={{ opacity: 0.6 }}>
-        <ProviderIcon iconUrl={props.iconUrl} provider={props.provider} size={props.size} />
+        <ProviderIcon
+          iconUrl={props.iconUrl}
+          provider={props.provider}
+          size={props.size}
+          displayName={props.displayName}
+        />
       </View>
-      {props.showBadge ? (
+      {showBadge ? (
         // An absolute badge alone is capped at icon width and clips initials.
         <View
           pointerEvents="none"

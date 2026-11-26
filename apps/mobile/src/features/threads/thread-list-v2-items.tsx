@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { eventSnoozeAllowed, eventSnoozeLabel, ThreadSnoozeCondition } from "@t3tools/contracts";
+import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import { serverEnvironment } from "../../state/server";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
@@ -88,7 +89,7 @@ import {
   threadHasUnseenCompletion,
   resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
-  resolveThreadListV2ProviderDrivers,
+  resolveThreadListV2ProviderStack,
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
   threadListV2RowAccessibilityLabel,
@@ -844,14 +845,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const dormant = useSwipeRowDormant(props.activationKey);
 
   const selectThread = () => onSelectThread(thread);
-  const { providerDrivers, providerIconUrl } = useMemo(() => {
+  const { providerStack, providerIconUrl } = useMemo(() => {
     const provider = props.providers?.find(
       (candidate) =>
         candidate.instanceId ===
         (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
     );
     return {
-      providerDrivers: resolveThreadListV2ProviderDrivers(thread, props.providers),
+      providerStack: resolveThreadListV2ProviderStack(thread, props.providers),
       providerIconUrl: provider?.iconUrl,
     };
   }, [thread, props.providers]);
@@ -1666,13 +1667,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : null}
         {providerInstance ? (
           <View className="flex-row items-center">
-            {providerDrivers.slice(0, -1).map(
-              (driver, index) => (
-                /* oxlint-disable react/no-array-index-key -- Provider history can repeat a driver; these decorative icons have no local state. */ <View
-                  key={`${driver}:${index}`}
+            {providerStack.slice(0, -1).map(
+              (provider, index) => (
+                /* oxlint-disable react/no-array-index-key -- Provider history can repeat an instance; these decorative icons have no local state. */ <View
+                  key={`${provider.instanceId}:${index}`}
                   className="-mr-1 opacity-30"
                 >
-                  <ProviderIcon provider={driver} size={12} />
+                  <ProviderIcon
+                    provider={provider.driver}
+                    size={12}
+                    displayName={resolveProviderInstanceDisplayName(provider)}
+                  />
                 </View>
               ) /* oxlint-enable react/no-array-index-key */,
             )}

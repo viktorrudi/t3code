@@ -167,7 +167,12 @@ function ProviderHeader(props: {
   const content = (
     <>
       {props.nested ? null : (
-        <ProviderIcon iconUrl={props.iconUrl} provider={props.driver} size={15} />
+        <ProviderIcon
+          iconUrl={props.iconUrl}
+          provider={props.driver}
+          size={15}
+          displayName={props.label}
+        />
       )}
       {props.detail ? (
         <View className="min-w-0 flex-1 py-1">
