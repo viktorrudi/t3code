@@ -1,3 +1,4 @@
+import { detectMobileComposerTrigger, mobileEnvironmentItems } from "./mobileEnvironmentMentions";
 import { threadPullRequestKeyOf } from "@t3tools/client-runtime/thread-pull-requests";
 import * as Dialog from "../../components/ui/Dialog";
 import { MODEL_DELEGATION_SUFFIX } from "../../lib/modelMentionText";
@@ -32,7 +33,6 @@ import {
 } from "../../state/use-composer-drafts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
-  detectComposerTrigger,
   replaceTextRange,
   serializeComposerFileLink,
   type ComposerTrigger,
@@ -260,6 +260,8 @@ export function useComposerCommandMenu({
   environmentId,
   threadShells = EMPTY_THREAD_SHELLS,
   environments = EMPTY_ENVIRONMENTS,
+  hashEnvironments = EMPTY_ENVIRONMENTS,
+  personalFork = false,
   linkedEnvironments = NO_LINKED_ENVIRONMENTS,
   currentThreadId = null,
   projectCwd,
@@ -285,6 +287,8 @@ export function useComposerCommandMenu({
   readonly environmentId: EnvironmentId | null;
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
   readonly environments?: ReadonlyArray<ComposerEnvironmentCandidate>;
+  readonly hashEnvironments?: ReadonlyArray<ComposerEnvironmentCandidate>;
+  readonly personalFork?: boolean;
   /** The machines `environmentId` links to, by name, whose threads the picker also offers. */
   readonly linkedEnvironments?: ReadonlyMap<EnvironmentId, string>;
   readonly currentThreadId?: ThreadId | null;
@@ -357,7 +361,7 @@ export function useComposerCommandMenu({
     if (!enabled || selection.start !== selection.end) {
       return null;
     }
-    return detectComposerTrigger(draftMessage, selection.end);
+    return detectMobileComposerTrigger(draftMessage, selection.end, personalFork);
   })();
   const pathSearch = useComposerPathSearch({
     environmentId,
@@ -381,6 +385,9 @@ export function useComposerCommandMenu({
 
   const items = ((): ComposerCommandItem[] => {
     if (!trigger) return [];
+
+    if (trigger.kind === "environment")
+      return mobileEnvironmentItems(hashEnvironments, trigger.query);
 
     if (trigger.kind === "pull-request") {
       return pullRequestSearch.entries.map((entry) => ({
@@ -573,7 +580,7 @@ export function useComposerCommandMenu({
   const onSelect = (item: ComposerCommandItem) => {
     if (!trigger) return;
     if (item.type === "environment") {
-      if (!ownerKey || trigger.kind !== "path") return;
+      if (!ownerKey || (trigger.kind !== "path" && trigger.kind !== "environment")) return;
       const record = environmentComposerContext(item.environmentId, item.label);
       const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
       const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
@@ -710,7 +717,9 @@ export function useComposerCommandMenu({
     items,
     skills,
     isLoading:
-      trigger?.kind === "pull-request" ? pullRequestSearch.isPending : pathSearch.isPending,
+      trigger?.kind === "pull-request"
+        ? pullRequestSearch.isPending
+        : trigger?.kind === "path" && pathSearch.isPending,
     error:
       trigger?.kind === "pull-request"
         ? pullRequestProjectId === null || pullRequestRepository === null

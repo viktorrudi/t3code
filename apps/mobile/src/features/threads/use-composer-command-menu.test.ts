@@ -1,5 +1,11 @@
+import { detectMobileComposerTrigger, mobileEnvironmentItems } from "./mobileEnvironmentMentions";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
@@ -182,5 +188,34 @@ describe("mobile model mentions", () => {
     ["unavailable", [provider("traex", { availability: "unavailable" })]],
   ] as const)("does not suggest a preserved selection whose provider is %s", (_, providers) => {
     expect(buildComposerModelItems([option("traex:gpt-6.1")], "gpt", providers)).toEqual([]);
+  });
+});
+
+describe("mobile environment hash mentions", () => {
+  it("uses hashes for environments only in the personal fork", () => {
+    for (const query of ["", "Agents", "mac", "123"]) {
+      const text = `Compare #${query}`;
+      expect(detectMobileComposerTrigger(text, text.length, true)).toMatchObject({
+        kind: "environment",
+        query,
+        rangeStart: 8,
+      });
+      expect(detectMobileComposerTrigger(text, text.length, false)?.kind).toBe("pull-request");
+    }
+    expect(detectMobileComposerTrigger("# Heading", 9, true)).toBeNull();
+    expect(detectMobileComposerTrigger("issue#123", 9, true)).toBeNull();
+    expect(mobileEnvironmentItems([], "")).toEqual([]);
+    expect(
+      mobileEnvironmentItems(
+        [{ environmentId: EnvironmentId.make("agents"), label: "Agents Mac", machine: "laptop" }],
+        "",
+      ).map((item) => item.label),
+    ).toEqual(["Agents Mac"]);
+    expect(
+      mobileEnvironmentItems(
+        [{ environmentId: EnvironmentId.make("agents"), label: "Agents Mac", machine: "laptop" }],
+        "PC",
+      ),
+    ).toEqual([]);
   });
 });

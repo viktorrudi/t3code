@@ -10,7 +10,7 @@ import type {
   ServerProviderSkill,
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
+import type { MobileComposerTrigger } from "./mobileEnvironmentMentions";
 import { msg, useMessages } from "gt-react-native";
 import { memo } from "react";
 import { Pressable, ScrollView, StyleSheet, View, type ViewStyle } from "react-native";
@@ -25,6 +25,8 @@ import type { MessageResolver } from "../../i18n/messages";
 import { cn } from "../../lib/cn";
 import type { ModelOption } from "../../lib/modelOptions";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
+type ComposerTriggerKind = MobileComposerTrigger["kind"];
+
 export type ComposerCommandItem =
   | {
       readonly id: string;
@@ -145,6 +147,8 @@ function groupLabel(
   resolve: MessageResolver,
 ): string | null {
   switch (triggerKind) {
+    case "environment":
+      return resolve(msg("Environments"));
     case "pull-request":
       return resolve(msg("Pull requests"));
     case "slash-command":
@@ -171,6 +175,7 @@ function emptyText(
   switch (triggerKind) {
     case "pull-request":
       return resolve(msg("No matching pull requests."));
+    case "environment":
     case "path":
       return resolve(msg("No matching mentions."));
     case "skill":
