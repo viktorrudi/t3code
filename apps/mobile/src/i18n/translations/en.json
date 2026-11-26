@@ -2565,6 +2565,8 @@
   "49bdaff1373c13f1": "Forget notification connection",
   "c7d2f4e850016103": "The hub is unreachable. Forget this connection on your iPhone? Alerts may continue until this device is removed from the old hub.",
   "20ffe8337f8f30ba": "Forget",
+  "d71eb40aa5c42ea7": "Apple Watch",
+  "ed94f7e55fbcace3": "This feature is not available in this app version.",
   "49dc538d62db32d0": "Enable notifications for this app in iPhone Settings.",
   "05154f2f790b1169": "This notification registration is invalid. Reconnect using a new invitation.",
   "24fd5a7b78c759e0": "The notification hub could not be reached. Check Tailscale and try again.",

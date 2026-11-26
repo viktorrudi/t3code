@@ -30,6 +30,8 @@ export function apnsPayload(candidate: PushCandidate, preview: boolean) {
     body: {
       environmentId: candidate.environmentId,
       threadId: candidate.threadId,
+      titleSnapshot: candidate.title,
+      kind: candidate.phase,
       deepLink: candidate.deepLink,
     },
   };

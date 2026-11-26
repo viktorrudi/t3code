@@ -1,0 +1,4 @@
+{
+  "platforms": ["apple"],
+  "apple": { "modules": ["T3PersonalWatchModule"], "podspecPath": "ios/T3PersonalWatch.podspec" }
+}

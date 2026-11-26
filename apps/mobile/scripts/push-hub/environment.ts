@@ -4,7 +4,11 @@ import * as NodeWS from "@effect/platform-node/NodeWS";
 import * as PlatformNodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   AuthAccessTokenType,
+  type AuthEnvironmentScope,
+  type ServerConfig,
   AuthOrchestrationReadScope,
+  OrchestrationV2Command,
+  OrchestrationV2ThreadLaunchInput,
   ThreadId,
   ExecutionEnvironmentDescriptor,
   ORCHESTRATION_PROTOCOL_VERSION,
@@ -66,9 +70,20 @@ function proofKey(privateKey: string): DpopProof.DpopProofKey {
   };
 }
 
+const decodeWatchBoundary0 = Schema.decodeUnknownSync(OrchestrationV2Command);
+const decodeWatchBoundary1 = Schema.decodeUnknownSync(OrchestrationV2ThreadLaunchInput);
+
+export interface HubConnection {
+  config: () => Promise<ServerConfig>;
+  request: (path: string, init?: RequestInit) => Promise<unknown>;
+  dispatch: (command: unknown) => Promise<unknown>;
+  launch: (input: unknown) => Promise<{ threadId: string }>;
+}
+
 export async function pairEnvironment(
   environment: HubEnvironment,
   bootstrapToken: string,
+  scopes: readonly AuthEnvironmentScope[] = [AuthOrchestrationReadScope],
 ): Promise<void> {
   const response = await fetch(new URL("/.well-known/t3/environment", environment.origin), {
     signal: AbortSignal.timeout(10_000),
@@ -96,7 +111,7 @@ export async function pairEnvironment(
         httpBaseUrl: environment.origin,
         credential: bootstrapToken,
         dpopProof,
-        scopes: [AuthOrchestrationReadScope],
+        scopes,
         clientMetadata,
       });
     }).pipe(Effect.provide(runtime)),
@@ -115,6 +130,7 @@ export async function watchEnvironment(
     readQuestion: (threadId: string, requestId: string) => Promise<string | undefined>,
   ) => Promise<void>,
   signal: AbortSignal,
+  onConnected?: (connection: HubConnection) => void,
 ): Promise<void> {
   const stored = JSON.parse(
     await NodeFSP.readFile(environment.credentialPath, "utf8"),
@@ -193,6 +209,42 @@ export async function watchEnvironment(
             ? question.questions.map((item) => item.question).join(" ")
             : undefined;
         };
+        onConnected?.({
+          config: () => runPromise(client["server.getConfig"]({}), { signal }),
+          request: async (path, init = {}) => {
+            const url = new URL(path, environment.origin);
+            if (url.origin !== new URL(environment.origin).origin)
+              throw new Error("Invalid destination");
+            const proof = await runPromise(
+              DpopProof.createProof({
+                key,
+                method: init.method ?? "GET",
+                url: url.href,
+                accessToken: credential.accessToken,
+              }).pipe(Effect.provide(runtime)),
+            );
+            const headers = new Headers(init.headers);
+            headers.set("authorization", `DPoP ${credential.accessToken}`);
+            headers.set("dpop", proof);
+            headers.set("x-t3-orchestration-protocol", String(ORCHESTRATION_PROTOCOL_VERSION));
+            const response = await fetch(url, {
+              ...init,
+              headers,
+              redirect: "error",
+              signal: AbortSignal.any([signal, init.signal ?? AbortSignal.timeout(30_000)]),
+            });
+            if (!response.ok) throw new Error(`Environment request failed (${response.status})`);
+            return response.json();
+          },
+          dispatch: (command) =>
+            runPromise(client["orchestration.dispatchCommand"](decodeWatchBoundary0(command)), {
+              signal,
+            }),
+          launch: (input) =>
+            runPromise(client["orchestration.launchThread"](decodeWatchBoundary1(input)), {
+              signal,
+            }),
+        });
         // Reconnect before token expiry so a sleeping environment never strands an expired socket.
         yield* client["orchestration.subscribeShell"]({}).pipe(
           Stream.runForEach((item) =>

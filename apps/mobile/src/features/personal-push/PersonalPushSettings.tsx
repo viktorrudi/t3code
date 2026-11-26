@@ -1,4 +1,5 @@
-import { useSyncExternalStore } from "react";
+import { requireOptionalNativeModule } from "expo";
+import { useState, useSyncExternalStore } from "react";
 import { Linking } from "react-native";
 import { useGT } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
@@ -20,6 +21,7 @@ import {
 
 export function PersonalPushSettings() {
   const gt = useGT();
+  const [watchError, setWatchError] = useState<string | null>(null);
   const state = useSyncExternalStore(subscribePersonalPush, getPersonalPushState);
   return (
     <SettingsScreen title={gt("Notifications")}>
@@ -116,6 +118,39 @@ export function PersonalPushSettings() {
               void Linking.openSettings();
             }}
           />
+        </SettingsSection>
+        <SettingsSection title={gt("Apple Watch")}>
+          <SettingsRow
+            icon="bell.badge"
+            label={gt("Connect")}
+            onPress={() =>
+              Dialog.prompt({
+                title: gt("Apple Watch"),
+                message: gt("Paste the invitation from your notification hub."),
+                initialValue: "",
+                confirmText: gt("Connect"),
+                onConfirm: (value) => {
+                  const native = requireOptionalNativeModule<{
+                    configure: (json: string) => Promise<void>;
+                  }>("T3PersonalWatch");
+                  if (!native) {
+                    setWatchError(gt("This feature is not available in this app version."));
+                    return;
+                  }
+                  void native.configure(value).then(
+                    () => setWatchError(null),
+                    (error: unknown) =>
+                      setWatchError(
+                        error instanceof Error ? error.message : gt("Connection failed"),
+                      ),
+                  );
+                },
+              })
+            }
+          />
+          {watchError ? (
+            <AppText className="text-base text-foreground-muted">{watchError}</AppText>
+          ) : null}
         </SettingsSection>
         {state.error ? (
           <AppText className="text-base text-foreground-muted">

@@ -14,5 +14,13 @@ if (!majorVersion) {
 
 module.exports = {
   nativeModuleSourceType: "files",
-  extraSources: [{ type: "contents", id: "appMajorVersion", contents: majorVersion }],
+  extraSources: [
+    { type: "contents", id: "appMajorVersion", contents: majorVersion },
+    { type: "dir", filePath: "watch", reasons: ["personal-watch-native"] },
+    {
+      type: "file",
+      filePath: "plugins/withPersonalWatch.cjs",
+      reasons: ["personal-watch-prebuild"],
+    },
+  ],
 };

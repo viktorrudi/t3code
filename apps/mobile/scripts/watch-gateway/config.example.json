@@ -1,0 +1,13 @@
+{
+  "directory": "/absolute/private/watch-gateway",
+  "publicOrigin": "https://watch.example.com",
+  "port": 3849,
+  "environments": [
+    {
+      "environmentId": "ENVIRONMENT_ID",
+      "name": "Agents Mac",
+      "origin": "https://your-existing-t3-environment.example.com",
+      "credentialPath": "/absolute/private/watch-gateway/environment-session.json"
+    }
+  ]
+}

@@ -10,10 +10,7 @@ import {
   snoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import {
-  hasUnseenRunFailure,
-  type SnoozePreset,
-} from "@t3tools/client-runtime/state/thread-settled";
+import { type SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import {
@@ -67,15 +64,12 @@ export function resolveThreadListV2ProviderStack(
   return current === undefined ? [] : entries;
 }
 
-export type ThreadListV2Status =
-  | "approval"
-  | "input"
-  | "request"
-  | "working"
-  | "waiting"
-  | "failed"
-  | "limited"
-  | "ready";
+import {
+  resolveThreadListV2Status,
+  resolveThreadListV2RowStatus,
+} from "@t3tools/client-runtime/state/thread-list-status";
+export { resolveThreadListV2Status, resolveThreadListV2RowStatus };
+export type { ThreadListV2Status } from "@t3tools/client-runtime/state/thread-list-status";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
 /**
@@ -270,45 +264,6 @@ export function resolveThreadListV2WokeAt(
     : null;
 }
 
-export function resolveThreadListV2Status(
-  thread: Pick<
-    EnvironmentThreadShell,
-    | "hasPendingApprovals"
-    | "hasPendingUserInput"
-    | "pendingSubagentRequest"
-    | "pendingGuestMessageCount"
-    | "runtime"
-    | "blockedOnThreadWait"
-  >,
-): ThreadListV2Status {
-  if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
-    return "approval";
-  }
-  if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
-    return "input";
-  }
-  // A guest is waiting on the owner; the agent's own requests come first.
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) {
-    return "request";
-  }
-  if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
-    return "waiting";
-  }
-  if (
-    thread.runtime !== null &&
-    ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
-  ) {
-    return "working";
-  }
-  if (thread.runtime?.status === "idle") {
-    return "waiting";
-  }
-  if (thread.runtime?.status === "failed") {
-    return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
-  }
-  return "ready";
-}
-
 export function threadListV2RowAccessibilityLabel(
   input: {
     readonly title: string;
@@ -339,17 +294,6 @@ export function threadListV2RowAccessibilityLabel(
   ]
     .filter((part) => part !== null)
     .join(", ");
-}
-
-/** Row status: a failure the user has already opened settles to ready, like Done. */
-export function resolveThreadListV2RowStatus(
-  thread: Parameters<typeof resolveThreadListV2Status>[0] &
-    Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt">,
-): ThreadListV2Status {
-  const status = resolveThreadListV2Status(thread);
-  // A runtime failure without a failed run has nothing to date it, so it stays.
-  if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
-  return hasUnseenRunFailure(thread) ? status : "ready";
 }
 
 function parseTimestampMs(isoDate: string): number {
