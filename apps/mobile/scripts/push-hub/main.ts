@@ -10,6 +10,7 @@ import { makeApnsSender } from "./apns.ts";
 import { prepareDelivery, finishDelivery } from "./delivery.ts";
 import { pairEnvironment, watchEnvironment } from "./environment.ts";
 import { notificationCandidates, plainPreview } from "./notifications.ts";
+import { updateNotificationThreads } from "./shell.ts";
 import { observeCandidates, readHubState, writePrivateJson } from "./store.ts";
 
 const Config = Schema.Struct({
@@ -267,15 +268,8 @@ async function main() {
             environment,
             async (item, readQuestion) => {
               const first = !initialized;
-              if (item.kind === "snapshot") {
-                threads.clear();
-                for (const thread of item.snapshot.threads) threads.set(thread.id, thread);
-                initialized = true;
-              } else if (item.kind === "thread.updated") {
-                if (item.location === "active") threads.set(item.thread.id, item.thread);
-                else threads.delete(item.thread.id);
-              } else if (item.kind === "thread.removed") threads.delete(item.threadId);
-              else return;
+              if (!updateNotificationThreads(threads, item)) return;
+              if (item.kind === "snapshot") initialized = true;
               if (!initialized) return;
               health.environments[index]!.connected = true;
               const candidates = notificationCandidates(

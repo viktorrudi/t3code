@@ -2,6 +2,80 @@ import { expect, it } from "vite-plus/test";
 import { plainPreview } from "./notifications.ts";
 import { apnsPayload } from "./apns.ts";
 import { observeCandidates, type HubState } from "./store.ts";
+import { updateNotificationThreads } from "./shell.ts";
+
+it("keeps thread completions through metadata-only shell refreshes until delivery", async () => {
+  const { makeRawThreadShell } = await import("../../src/test-fixtures.ts");
+  const { EnvironmentId, RunId } = await import("@t3tools/contracts");
+  const DateTime = await import("effect/DateTime");
+  const { notificationCandidates } = await import("./notifications.ts");
+  const { prepareDelivery } = await import("./delivery.ts");
+  const at = DateTime.makeUnsafe("2026-11-26T12:00:00Z");
+  const now = DateTime.toEpochMillis(at);
+  const thread = makeRawThreadShell({ status: "running", latestRunId: RunId.make("run") });
+  const threads = new Map<string, typeof thread>();
+  const environmentId = EnvironmentId.make("env");
+  const snapshot = {
+    schemaVersion: 1,
+    snapshotSequence: 1,
+    projects: [],
+    threads: [thread],
+    archivedThreads: [],
+  };
+  const state: HubState = {
+    devices: [{ id: "phone", token: "token", credentialHash: "hash", preview: true }],
+    seeded: {},
+    observed: {},
+    delivered: {},
+    pending: [],
+  };
+  updateNotificationThreads(threads, { kind: "snapshot", snapshot });
+  observeCandidates(
+    state,
+    environmentId,
+    notificationCandidates(environmentId, threads, now),
+    [...threads.keys()],
+    now,
+    true,
+  );
+  updateNotificationThreads(threads, {
+    kind: "thread.updated",
+    sequence: 2,
+    location: "active",
+    thread: { ...thread, status: "completed", latestRunCompletedAt: at },
+  });
+  observeCandidates(
+    state,
+    environmentId,
+    notificationCandidates(environmentId, threads, now),
+    [...threads.keys()],
+    now,
+    false,
+  );
+  expect(state.pending).toHaveLength(1);
+  for (const roots of [[], ["/repository"]]) {
+    updateNotificationThreads(threads, {
+      kind: "snapshot",
+      snapshot: { ...snapshot, threads: [], snapshotSequence: 2 },
+      resolvedRepositoryIdentityRoots: roots,
+    });
+    observeCandidates(
+      state,
+      environmentId,
+      notificationCandidates(environmentId, threads, now),
+      [...threads.keys()],
+      now,
+      false,
+    );
+    expect(prepareDelivery(state, now + 5000)?.job.candidate.threadId).toBe(thread.id);
+  }
+  updateNotificationThreads(threads, {
+    kind: "snapshot",
+    snapshot: { ...snapshot, threads: [], snapshotSequence: 3 },
+  });
+  observeCandidates(state, environmentId, [], [...threads.keys()], now, false);
+  expect(prepareDelivery(state, now + 5000)).toBeNull();
+});
 
 it("preserves notification identity across reconnects and avoids historical alerts on first pairing", () => {
   const state: HubState = {
