@@ -14,6 +14,7 @@ import { HttpClientRequest } from "effect/http";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as JiraClient from "./JiraClient.ts";
 import { jiraDocument } from "./jiraDocument.ts";
 import { JIRA_DETAIL_FIELDS, jiraIssueContent } from "./jiraIssueContent.ts";
@@ -128,6 +129,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projects = yield* ProjectService.ProjectService;
+  const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const readWork = loadTicketWork().pipe(
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),
@@ -141,6 +143,7 @@ export const make = Effect.gen(function* () {
       issue.key,
       (issue.fields.fixVersions ?? []).map((version) => version.name),
     ).pipe(
+      Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
       Effect.provideService(Orchestrator.OrchestratorV2, orchestrator),
       Effect.provideService(ProjectService.ProjectService, projects),
       Effect.provideService(FileSystem.FileSystem, fs),
