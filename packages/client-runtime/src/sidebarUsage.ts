@@ -1,5 +1,5 @@
-import { msg } from "gt-react";
-import { m as resolveMessage, type MessageResolver } from "../../i18n/messages";
+import { msg, mFallback } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type { ServerProvider } from "@t3tools/contracts";
 import { CURSOR_USAGE_WINDOWS, remainingPercent } from "@t3tools/shared/usageLimits";
 import { formatDuration } from "@t3tools/shared/usageLimitsCopy";
@@ -7,7 +7,7 @@ import { formatDuration } from "@t3tools/shared/usageLimitsCopy";
 function accountTrack(
   provider: ServerProvider,
   name: "Codex" | "Claude" | "Cursor",
-  m: MessageResolver,
+  m: MFunctionType,
 ) {
   const reported = provider.usageLimits?.windows ?? [];
   const selected =
@@ -52,11 +52,21 @@ function accountTrack(
 
 export function sidebarUsageRings(
   providers: readonly ServerProvider[],
-  m: MessageResolver = resolveMessage,
+  m: MFunctionType = mFallback,
 ) {
-  const enabled = providers.filter(
-    (provider) => provider.enabled && provider.auth.type !== "customEndpoint",
-  );
+  const enabled = providers
+    .filter((provider) => provider.enabled && provider.auth.type !== "customEndpoint")
+    .sort((a, b) => {
+      const checked = (provider: ServerProvider) => {
+        const at = Date.parse(provider.usageLimits?.checkedAt ?? provider.checkedAt);
+        return Number.isFinite(at) ? at : 0;
+      };
+      const usable = (provider: ServerProvider) =>
+        provider.auth.status === "authenticated" &&
+        !provider.usageLimits?.unavailable &&
+        provider.usageLimits?.windows.some((window) => Number.isFinite(window.usedPercent));
+      return Number(Boolean(usable(b))) - Number(Boolean(usable(a))) || checked(b) - checked(a);
+    });
   const codex =
     enabled.find((provider) => provider.driver === "codex" && provider.instanceId === "codex") ??
     enabled.find((provider) => provider.driver === "codex");
@@ -84,7 +94,7 @@ export function sidebarUsageRings(
 export function sidebarUsageReset(
   resetsAt: string | undefined,
   now: number,
-  m: MessageResolver = resolveMessage,
+  m: MFunctionType = mFallback,
 ): string {
   const reset = resetsAt ? Date.parse(resetsAt) : Number.NaN;
   if (!Number.isFinite(reset)) return "?";

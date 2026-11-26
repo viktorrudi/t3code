@@ -7,7 +7,7 @@ import {
   RESOURCE_HISTORY_WINDOW_MS,
   resourceHistorySegments,
   type ResourceHistorySample,
-} from "./SidebarEnvironmentHistory.logic";
+} from "@t3tools/client-runtime/environment-history";
 
 const VIEW_WIDTH = 100;
 const VIEW_HEIGHT = 24;

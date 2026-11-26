@@ -4,7 +4,7 @@ import {
   appendResourceHistory,
   EMPTY_RESOURCE_HISTORY,
   resourceHistorySegments,
-} from "./SidebarEnvironmentHistory.logic";
+} from "./environmentHistory.ts";
 
 const reading = (
   time: number,

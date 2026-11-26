@@ -650,6 +650,14 @@
     "./environment-status": {
       "types": "./src/environmentStatus.ts",
       "default": "./src/environmentStatus.ts"
+    },
+    "./sidebar-usage": {
+      "types": "./src/sidebarUsage.ts",
+      "default": "./src/sidebarUsage.ts"
+    },
+    "./environment-history": {
+      "types": "./src/environmentHistory.ts",
+      "default": "./src/environmentHistory.ts"
     }
   },
   "scripts": {

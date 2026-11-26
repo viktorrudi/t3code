@@ -12,7 +12,7 @@ import {
   sidebarUsageReset,
   sidebarUsageRings,
   type SidebarUsageTrack,
-} from "./SidebarUsageRings.logic";
+} from "@t3tools/client-runtime/sidebar-usage";
 
 const SENSONEO_GREEN = "#3fa535";
 

@@ -27,6 +27,7 @@ export function EnvironmentMachineSymbol(props: {
   readonly kind: EnvironmentMachineKind;
   readonly size: number;
   readonly tintColorClassName: string;
+  readonly tintColor?: string;
 }) {
   const m = useMessages();
   return (
@@ -35,6 +36,7 @@ export function EnvironmentMachineSymbol(props: {
       name={ENVIRONMENT_MACHINE_SYMBOLS[props.kind]}
       size={props.size}
       tintColorClassName={props.tintColorClassName}
+      tintColor={props.tintColor}
       type="monochrome"
     />
   );

@@ -41,7 +41,7 @@ import {
   EMPTY_RESOURCE_HISTORY,
   appendResourceHistory,
   type ResourceHistoryState,
-} from "./SidebarEnvironmentHistory.logic";
+} from "@t3tools/client-runtime/environment-history";
 
 const resourcesAtom = Atom.family((ids: string) =>
   Atom.make((get) => {

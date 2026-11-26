@@ -1,7 +1,7 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { sidebarUsageRings, sidebarUsageReset } from "./SidebarUsageRings.logic";
+import { sidebarUsageRings, sidebarUsageReset } from "./sidebarUsage.ts";
 
 function provider(
   instanceId: string,
@@ -46,6 +46,23 @@ function provider(
 describe("sidebarUsageRings", () => {
   it("groups accounts and selects every requested window in stable order", () => {
     const rings = sidebarUsageRings([
+      provider("claudeAgent", "claudeAgent", {
+        auth: { status: "unauthenticated" },
+        usageLimits: { checkedAt: "2026-11-10T11:00:00Z", windows: [] },
+      }),
+      provider("claudeAgent", "claudeAgent", {
+        usageLimits: {
+          checkedAt: "2026-11-10T10:00:00Z",
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        },
+      }),
+      provider("claudeAgent", "claudeAgent", {
+        usageLimits: {
+          checkedAt: "2026-11-10T08:00:00Z",
+          windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 99 }],
+        },
+      }),
       provider("litellm-sensoneo", "claudeAgent", {
         auth: { status: "authenticated", type: "customEndpoint" },
       }),
