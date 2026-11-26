@@ -1323,9 +1323,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   // only identify the checkout, machine or provider trail the title instead.
   const metaLineEmpty =
     !displayedBranch && prBadge === null && tickets.length === 0 && issueBadge === null;
-  const showsScratchLabel = showsScratchMachine && !metaLineEmpty;
   const remoteMachineIcon =
-    (isRemote || showsScratchMachine) && !showsScratchLabel ? (
+    isRemote || showsScratchMachine ? (
       <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
         <EnvironmentMachineIcon aria-hidden kind={props.environmentMachine} className="size-3.5" />
       </span>
@@ -1355,46 +1354,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
       {ticketsLead ? (
-        // Clips the release chips, not the machine and provider glyphs, on a narrow sidebar.
+        // Several tickets may overflow on a narrow sidebar; keep the PR chip visible.
         <span className="flex min-w-0 items-center gap-1.5 overflow-hidden">
-          {issueBadge}
+          <span className="flex min-w-0 overflow-hidden">{issueBadge}</span>
           {ticketChips}
         </span>
       ) : null}
-      {showsWorktree ? <ThreadWorktreeIndicator thread={checkoutThread} /> : null}
       {displayedBranch ? (
         <span className="flex min-w-0 flex-1">
           <MiddleTruncate value={displayedBranch} showTitle={false} />
         </span>
-      ) : showsScratchLabel ? (
-        <>
-          <EnvironmentMachineIcon
-            aria-hidden
-            kind={props.environmentMachine}
-            className="size-3 shrink-0"
-          />
-          <span className="min-w-0 flex-1 truncate">{props.scratchMachineLabel}</span>
-        </>
       ) : (
         <span className="flex-1" />
       )}
-      {terminalStatusIcon}
       {prBadge}
       {ticketsLead ? null : issueBadge}
-      {diffCount}
-      <span
-        aria-hidden
-        className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-      >
-        {remoteMachineIcon}
-        <SidebarProviderStack
-          thread={thread}
-          providerEntryByInstanceId={props.providerEntryByInstanceId}
-        />
-      </span>
     </div>
   );
-  const titleLineIcons = metaLineEmpty ? (
+  const titleLineIcons = (
     <span className="inline-flex shrink-0 items-center gap-1.5 text-secondary-label">
       {showsWorktree ? <ThreadWorktreeIndicator thread={checkoutThread} /> : null}
       {terminalStatusIcon}
@@ -1407,7 +1384,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         />
       </span>
     </span>
-  ) : null;
+  );
 
   if (variant !== "card") {
     return (

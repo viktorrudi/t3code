@@ -89,22 +89,24 @@ export function ThreadTicketChips({
   return (
     <>
       {shown.map((ticket) => (
-        <span key={ticket.key} className="inline-flex shrink-0 items-center gap-1">
+        <span key={ticket.key} className="inline-flex min-w-0 items-center gap-1">
           {ticket.link === null ? (
-            <InlineButton
-              tone="muted"
-              aria-label={gt("Open {key}", { key: ticket.key })}
-              onPointerDown={keepFromRow}
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpen(ticket);
-              }}
-            >
-              <IssueGlyph.issue aria-hidden className="size-3 shrink-0" />
-              <span className="max-w-16 truncate text-xs font-normal text-secondary-label tabular-nums">
-                {ticket.key}
-              </span>
-            </InlineButton>
+            <span className="flex min-w-0 overflow-hidden">
+              <InlineButton
+                tone="muted"
+                aria-label={gt("Open {key}", { key: ticket.key })}
+                onPointerDown={keepFromRow}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpen(ticket);
+                }}
+              >
+                <IssueGlyph.issue aria-hidden className="size-3 shrink-0" />
+                <span className="max-w-16 truncate text-xs font-normal text-secondary-label tabular-nums">
+                  {ticket.key}
+                </span>
+              </InlineButton>
+            </span>
           ) : null}
           {ticket.deploy ? (
             <TicketDeployBadge
