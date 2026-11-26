@@ -5,3 +5,5 @@ Before modifying T3 Code in Codex or Claude Personal, invoke `$t3-code-modificat
 Keep the code we add separate and easy to maintain so future upstream T3 Code updates are easy to integrate. Prefer small modules and minimal changes to upstream files. Keep unrelated customizations in separate commits, and preserve them when updating.
 
 Follow the app's existing visual style, components, design tokens, terminology, and architecture.
+
+After verifying and integrating an authorized local change, publish the complete intended commit chain to this fork's `origin` so other environments can obtain it; no separate push request is needed. Preserve unrelated work, check the remote branch, and use an ordinary fast-forward push. Never force-push or publish credentials, generated state, or another session's unfinished changes. A push makes source available; installing it on another environment still requires its platform build, compatibility checks and coordinated restart. Record any blocked publication explicitly.
