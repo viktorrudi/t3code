@@ -27,6 +27,7 @@ function settings({ bundleId, version, buildNumber, teamId = "", companion = fal
       '"Record a message for transcription on your T3 environment. Nothing is sent until you review the draft."',
     MARKETING_VERSION: version,
     CURRENT_PROJECT_VERSION: buildNumber,
+    APS_ENVIRONMENT: "development",
     CODE_SIGN_STYLE: "Automatic",
     DEVELOPMENT_TEAM: teamId,
     CODE_SIGN_ENTITLEMENTS: '"$(SRCROOT)/T3Watch/Watch.entitlements"',
@@ -72,6 +73,8 @@ function addToProject(project, options) {
     const config = objects.XCBuildConfiguration[entry.value].buildSettings;
     delete config.INFOPLIST_FILE;
     Object.assign(config, settings({ ...options, companion: true }));
+    config.APS_ENVIRONMENT =
+      objects.XCBuildConfiguration[entry.value].name === "Release" ? "production" : "development";
   }
   const phase = project.addBuildPhase(
     [],
@@ -146,7 +149,9 @@ function generate(destination, options) {
         name,
         buildSettings: {
           ...buildSettings,
-          ...(name === "Release" && prefix === "target" ? { SWIFT_OPTIMIZATION_LEVEL: "-O" } : {}),
+          ...(name === "Release" && prefix === "target"
+            ? { SWIFT_OPTIMIZATION_LEVEL: "-O", APS_ENVIRONMENT: "production" }
+            : {}),
         },
       }),
     );
