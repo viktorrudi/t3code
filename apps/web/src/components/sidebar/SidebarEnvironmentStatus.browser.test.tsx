@@ -15,6 +15,7 @@ import { SidebarEnvironmentStatus } from "./SidebarEnvironmentStatus";
 const mocks = vi.hoisted(() => ({
   environments: [] as EnvironmentPresentation[],
   sidebarState: "expanded",
+  setOpen: (_open: boolean) => {},
   read: (_id: string): AsyncResult.AsyncResult<HostResourcesSnapshot, string> =>
     AsyncResult.initial(),
 }));
@@ -32,7 +33,12 @@ vi.mock("../ui/sidebar", () => ({
     <li className={className}>{children}</li>
   ),
   SidebarProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  useSidebar: () => ({ isMobile: false, openMobile: false, state: mocks.sidebarState }),
+  useSidebar: () => ({
+    isMobile: false,
+    openMobile: false,
+    state: mocks.sidebarState,
+    setOpen: (open: boolean) => mocks.setOpen(open),
+  }),
 }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
@@ -125,15 +131,31 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
       ),
     )
     .toBeVisible();
+  const details = (name: string) => page.getByRole("group", { name: `${name} details` });
   await userEvent.hover(primary);
-  await expect.element(page.getByText("CPU: 25%")).toBeVisible();
-  await userEvent.unhover(primary);
-  await userEvent.tab();
-  await expect.element(primary).toHaveFocus();
+  await expect.element(details("primary · This computer")).toBeVisible();
   await expect.element(page.getByText("Working agents: 2 (this T3 server)")).toBeVisible();
+  await expect.element(page.getByText("Collecting samples").first()).toBeVisible();
+  await userEvent.hover(page.getByText("Working agents: 2 (this T3 server)"));
+  await expect.element(details("primary · This computer")).toBeVisible();
+  await userEvent.unhover(primary);
+  await expect.element(details("primary · This computer")).not.toBeInTheDocument();
+  await userEvent.click(primary);
+  await userEvent.unhover(primary);
+  await expect.element(primary).toHaveAttribute("aria-expanded", "true");
+  await userEvent.click(primary);
+  await userEvent.unhover(primary);
+  await expect.element(primary).toHaveAttribute("aria-expanded", "false");
+  await userEvent.tab();
+  await userEvent.tab({ shift: true });
+  await expect.element(primary).toHaveFocus();
+  await expect.element(details("primary · This computer")).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(details("primary · This computer")).not.toBeInTheDocument();
   await userEvent.tab();
   await expect.element(screen.getByLabelText(/^older-peer: Connected/)).toHaveFocus();
   await expect.element(page.getByText("Statistics unavailable")).toBeVisible();
+  await expect.element(details("primary · This computer")).not.toBeInTheDocument();
   await userEvent.tab();
   await expect
     .element(page.getByText("Working agents and free disk need a newer T3 server."))
@@ -141,9 +163,18 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
   await userEvent.tab();
   await expect.element(offline).toHaveFocus();
   await expect.element(page.getByText("Not connected; power state unknown")).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(details("rudipc")).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(details("rudipc")).not.toBeInTheDocument();
 
   mocks.sidebarState = "collapsed";
+  const setOpen = vi.fn();
+  mocks.setOpen = setOpen;
   await screen.rerender(ui());
+  await userEvent.click(screen.getByRole("button", { name: /^primary · This computer:/ }));
+  expect(setOpen).toHaveBeenCalledWith(true);
+  await expect.element(details("primary · This computer")).not.toBeInTheDocument();
   using _timers = fakeTimers();
   const collapsedCount = reads.mock.calls.length;
   await act(() => vi.advanceTimersByTimeAsync(4_000));
