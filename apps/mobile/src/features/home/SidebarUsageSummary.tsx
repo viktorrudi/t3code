@@ -107,7 +107,7 @@ export function SidebarUsageSummary() {
                                   window.percent !== null &&
                                   window.percent <= 20 &&
                                   "text-warning-foreground",
-                                !due && !stale && window.percent === 0 && "text-destructive",
+                                !due && !stale && window.percent === 0 && "text-danger-foreground",
                               )}
                             >
                               {window.percent === null ? "?" : `${window.percent}%`}
