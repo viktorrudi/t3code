@@ -168,6 +168,32 @@ describe("mobile model mentions", () => {
       ["model:opencode:traex/gpt-6.1", "OpenCode · Traex"],
       ["model:traex:gpt-6.1", "Traex"],
     ]);
+    expect(
+      buildComposerModelItems([option("traex:gpt-6.1")], "", [provider("traex")], true).map(
+        (item) => item.id,
+      ),
+    ).toEqual(["model:traex:gpt-6.1"]);
+    expect(
+      buildComposerModelItems([option("traex:gpt-6.1")], "t", [provider("traex")], true),
+    ).toHaveLength(1);
+    expect(
+      buildComposerModelItems([option("traex:gpt-6.1")], "missing", [provider("traex")], true),
+    ).toEqual([]);
+    const rankedOptions = [
+      option("traex:gpt-6.1", { label: "GPT 6 Sol" }),
+      option("traex:gpt-6.1-astra", { label: "GPT 6 Astra" }),
+    ];
+    expect(buildComposerModelItems(rankedOptions, "gpt-6", [provider("traex")], true)).toEqual(
+      buildComposerModelItems(rankedOptions, "gpt-6", [provider("traex")]),
+    );
+    expect(
+      buildComposerModelItems(
+        Array.from({ length: 12 }, (_, index) => option(`traex:gpt-${index}`)),
+        "",
+        [provider("traex")],
+        true,
+      ),
+    ).toHaveLength(8);
     const item = items.find((candidate) => candidate.id === "model:traex:gpt-6.1");
     if (!item) throw new Error("Expected the Traex reference");
     expect(
@@ -183,6 +209,7 @@ describe("mobile model mentions", () => {
   it.each([
     ["missing", []],
     ["not installed", [provider("traex", { installed: false })]],
+    ["disabled", [provider("traex", { enabled: false })]],
     ["signed out", [provider("traex", { auth: { status: "unauthenticated" } })]],
     ["not ready", [provider("traex", { status: "error" })]],
     ["unavailable", [provider("traex", { availability: "unavailable" })]],

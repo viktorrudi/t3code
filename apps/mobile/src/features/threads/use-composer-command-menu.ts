@@ -189,12 +189,14 @@ export function buildComposerModelItems(
   modelOptions: ReadonlyArray<ModelOption>,
   query: string,
   providers: ReadonlyArray<ServerProvider>,
+  browseModels = false,
 ): ComposerCommandItem[] {
   // The picker retains saved selections even when their provider is no longer usable.
   const readyProviderIds = new Set(
     providers
       .filter(
         (provider) =>
+          provider.enabled &&
           provider.installed &&
           provider.status === "ready" &&
           provider.auth.status !== "unauthenticated" &&
@@ -202,22 +204,41 @@ export function buildComposerModelItems(
       )
       .map((provider) => provider.instanceId),
   );
-  return rankComposerModelMentions(
-    modelOptions.filter(
-      (option) =>
-        readyProviderIds.has(option.selection.instanceId) &&
-        !option.isUnavailable &&
-        !option.isHidden &&
-        !option.isLegacy,
-    ),
-    query,
-    (option) => ({
-      name: option.label,
-      ...(option.subtitle ? { subProvider: option.subtitle } : {}),
-      driverKind: option.providerDriver,
-      providerDisplayName: option.providerLabel,
-    }),
-  ).map((option) => ({
+  const candidates = modelOptions.filter(
+    (option) =>
+      readyProviderIds.has(option.selection.instanceId) &&
+      !option.isUnavailable &&
+      !option.isHidden &&
+      !option.isLegacy,
+  );
+  const searchable = (option: ModelOption) => ({
+    name: option.label,
+    ...(option.subtitle ? { subProvider: option.subtitle } : {}),
+    driverKind: option.providerDriver,
+    providerDisplayName: option.providerLabel,
+  });
+  const words = query.toLowerCase().replace(/[:/]+/g, " ").split(/\s+/).filter(Boolean);
+  const ranked = rankComposerModelMentions(candidates, query, searchable);
+  const matches =
+    browseModels && words.join("").length < 2
+      ? candidates
+          .filter((option) =>
+            words.every((word) =>
+              [
+                option.label,
+                option.subtitle,
+                option.providerLabel,
+                option.providerKey,
+                option.selection.model,
+              ]
+                .join(" ")
+                .toLowerCase()
+                .includes(word),
+            ),
+          )
+          .slice(0, 8)
+      : ranked;
+  return matches.map((option) => ({
     id: `model:${option.key}`,
     type: "model",
     option,
@@ -554,12 +575,13 @@ export function useComposerCommandMenu({
         : [];
       const modelItems =
         modelOptions && modelProviders
-          ? buildComposerModelItems(modelOptions, trigger.query, modelProviders)
+          ? buildComposerModelItems(modelOptions, trigger.query, modelProviders, personalFork)
           : [];
       return [
+        ...(personalFork ? modelItems : []),
         ...threadItems,
         ...environmentItems,
-        ...modelItems,
+        ...(!personalFork ? modelItems : []),
         ...pathSearch.entries.map((entry) => {
           const parts = entry.path.split("/");
           return {
