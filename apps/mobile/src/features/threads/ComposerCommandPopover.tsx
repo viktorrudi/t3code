@@ -203,6 +203,7 @@ const CommandRow = memo(function CommandRow(props: {
         <ProviderIcon
           iconUrl={props.item.option.providerIconUrl}
           provider={props.item.option.providerDriver}
+          displayName={props.item.option.providerLabel}
           size={16}
         />
       ) : iconName ? (

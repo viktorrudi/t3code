@@ -6,15 +6,28 @@ import {
 } from "../components/settings/settingsLayout";
 import { ChatWidthSettingsRow } from "../components/settings/ChatWidthSettingsRow";
 import { Switch } from "../components/ui/switch";
-import { useAtSearchMode } from "./personalSettings";
+import { useAtSearchMode, useSidebarShowBranches } from "./personalSettings";
 
 export function PersonalSettingsPanel() {
   const gt = useGT();
   const [mode, setMode] = useAtSearchMode();
+  const [showBranches, setShowBranches] = useSidebarShowBranches();
   return (
     <SettingsPageContainer>
       <SettingsSection id="personal-customizations" title={gt("Personal customizations")}>
         <ChatWidthSettingsRow />
+        <SettingsRow
+          id="sidebar-show-branches"
+          title={gt("Show branches on sidebar cards")}
+          description={gt("Display the Git branch on chat cards in the sidebar.")}
+          control={
+            <Switch
+              checked={showBranches}
+              onCheckedChange={setShowBranches}
+              aria-label={gt("Show branches on sidebar cards")}
+            />
+          }
+        />
         <SettingsRow
           id="model-mentions"
           title={gt("Use @ to reference models")}

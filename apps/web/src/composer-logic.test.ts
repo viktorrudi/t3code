@@ -312,16 +312,19 @@ describe("detectComposerTrigger", () => {
     expect(detectComposerTrigger(text, text.length)).toBeNull();
   });
 
-  it("detects a pull request number at a token boundary", () => {
-    const text = "Compare this with #8737";
+  it.each(["", "Agents", "mac", "8737", "pracovní"])(
+    "detects a # environment query %j",
+    (query) => {
+      const text = `Compare this with #${query}`;
 
-    expect(detectComposerTrigger(text, text.length)).toEqual({
-      kind: "pull-request",
-      query: "8737",
-      rangeStart: "Compare this with ".length,
-      rangeEnd: text.length,
-    });
-  });
+      expect(detectComposerTrigger(text, text.length)).toEqual({
+        kind: "environment",
+        query,
+        rangeStart: "Compare this with ".length,
+        rangeEnd: text.length,
+      });
+    },
+  );
 
   it("does not keep pull request completion active for headings or embedded hashes", () => {
     expect(detectComposerTrigger("# Heading", "# Heading".length)).toBeNull();

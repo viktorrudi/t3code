@@ -40,6 +40,7 @@ import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUsageRings } from "./SidebarUsageRings";
+import { SidebarEnvironmentStatus } from "./SidebarEnvironmentStatus";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
@@ -311,6 +312,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
       <SidebarThreadUndoNotice />
       <SidebarUpdatePill />
       {!isOnUtilityPage ? <SidebarUsageRings onClick={handleUsageClick} /> : null}
+      {!isOnUtilityPage ? <SidebarEnvironmentStatus /> : null}
     </SidebarMenu>
   );
 });

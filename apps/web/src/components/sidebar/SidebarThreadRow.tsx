@@ -133,6 +133,10 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ThreadTicketChips } from "../threadTickets/ThreadTicketChips";
 import { useThreadTickets } from "../../state/threadTickets";
+import {
+  jiraTicketIssueTarget,
+  mergeThreadJiraTickets,
+} from "../threadTickets/threadJiraTickets.logic";
 import { ActivityShimmerOverlay } from "../chat/TimelineRowParts";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
@@ -599,6 +603,7 @@ type SidebarThreadRowProps = {
   // "folder" is a one-line row inside a boring sidebar project folder;
   // "folder-multiline" adds the card's branch and PR line under it.
   variant: "card" | "slim" | "grouped" | "folder" | "folder-multiline";
+  showBranch: boolean;
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -1311,74 +1316,75 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     )
   ) : null;
 
+  const diff = latestRunDiff(thread);
+  const displayedBranch = props.showBranch ? checkoutThread.branch : null;
+  const showsWorktree = Boolean(checkoutThread.branch && checkoutThread.worktreePath?.trim());
+  // The third line is for references (tickets, issues, PRs) and opted-in branch text. Glyphs that
+  // only identify the checkout, machine or provider trail the title instead.
+  const metaLineEmpty =
+    !displayedBranch && prBadge === null && tickets.length === 0 && issueBadge === null;
   const remoteMachineIcon =
-    isRemote && !showsScratchMachine ? (
+    isRemote || showsScratchMachine ? (
       <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
         <EnvironmentMachineIcon aria-hidden kind={props.environmentMachine} className="size-3.5" />
       </span>
     ) : null;
-  const diff = latestRunDiff(thread);
-  // Only the trailing icons would remain, so the row moves them to the title line instead.
-  const metaLineEmpty =
-    !checkoutThread.branch &&
-    !showsScratchMachine &&
-    prBadge === null &&
-    tickets.length === 0 &&
-    issueBadge === null &&
-    diff === null &&
-    runningTerminalIds.length === 0;
+  const diffCount = diff ? (
+    <span className="shrink-0 font-mono text-xs">
+      <span className="text-diff-addition-foreground">+{formatDiffCount(diff.insertions)}</span>{" "}
+      <span className="text-diff-deletion-foreground">−{formatDiffCount(diff.deletions)}</span>
+    </span>
+  ) : null;
+  const jiraTickets = mergeThreadJiraTickets(tickets, thread.issues);
+  // A Jira ticket is the row's reference, so it leads the meta line; the native issue chip already
+  // names a dual-linked ticket, so it moves with the chips.
+  const ticketsLead = jiraTickets.length > 0;
+  const ticketChips = (
+    <ThreadTicketChips
+      tickets={jiraTickets}
+      environmentId={thread.environmentId}
+      onOpen={(ticket) => {
+        useRightPanelStore
+          .getState()
+          .openIssue(threadRef, jiraTicketIssueTarget(ticket, thread.projectId));
+        if (!props.isRouteThread) onThreadActivate(threadRef);
+      }}
+    />
+  );
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-      {checkoutThread.branch ? (
-        <>
-          <ThreadWorktreeIndicator thread={checkoutThread} />
-          <span className="flex min-w-0 flex-1">
-            <MiddleTruncate value={checkoutThread.branch} showTitle={false} />
-          </span>
-        </>
-      ) : showsScratchMachine ? (
-        <>
-          <EnvironmentMachineIcon
-            aria-hidden
-            kind={props.environmentMachine}
-            className="size-3 shrink-0"
-          />
-          <span className="min-w-0 flex-1 truncate">{props.scratchMachineLabel}</span>
-        </>
+      {ticketsLead ? (
+        // Several tickets may overflow on a narrow sidebar; keep the PR chip visible.
+        <span className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+          <span className="flex min-w-0 overflow-hidden">{issueBadge}</span>
+          {ticketChips}
+        </span>
+      ) : null}
+      {displayedBranch ? (
+        <span className="flex min-w-0 flex-1">
+          <MiddleTruncate value={displayedBranch} showTitle={false} />
+        </span>
       ) : (
         <span className="flex-1" />
       )}
-      <ThreadTicketChips tickets={tickets} environmentId={thread.environmentId} />
-      {terminalStatusIcon}
       {prBadge}
-      {issueBadge}
-      {diff ? (
-        <span className="shrink-0 font-mono">
-          <span className="text-diff-addition-foreground">+{formatDiffCount(diff.insertions)}</span>{" "}
-          <span className="text-diff-deletion-foreground">−{formatDiffCount(diff.deletions)}</span>
-        </span>
-      ) : null}
-      <span
-        aria-hidden
-        className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-      >
+      {ticketsLead ? null : issueBadge}
+    </div>
+  );
+  const titleLineIcons = (
+    <span className="inline-flex shrink-0 items-center gap-1.5 text-secondary-label">
+      {showsWorktree ? <ThreadWorktreeIndicator thread={checkoutThread} /> : null}
+      {terminalStatusIcon}
+      {diffCount}
+      <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
         {remoteMachineIcon}
         <SidebarProviderStack
           thread={thread}
           providerEntryByInstanceId={props.providerEntryByInstanceId}
         />
       </span>
-    </div>
-  );
-  const titleLineIcons = metaLineEmpty ? (
-    <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
-      {remoteMachineIcon}
-      <SidebarProviderStack
-        thread={thread}
-        providerEntryByInstanceId={props.providerEntryByInstanceId}
-      />
     </span>
-  ) : null;
+  );
 
   if (variant !== "card") {
     return (

@@ -9,11 +9,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import { HttpClientRequest } from "effect/http";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as JiraClient from "./JiraClient.ts";
+import { jiraDocument } from "./jiraDocument.ts";
+import { JIRA_DETAIL_FIELDS, jiraIssueContent } from "./jiraIssueContent.ts";
 import { httpsBrowserUrl, loadTicketWork } from "./JiraTicketWork.ts";
 import { JIRA_HOST, JIRA_PROJECTS, JIRA_TRACKER, jiraProject } from "./SensoneoJira.ts";
 
@@ -42,10 +45,23 @@ const JiraIssue = Schema.Struct({
     fixVersions: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String }))),
   }),
 });
+const decodeIssue = Schema.decodeUnknownEffect(JiraIssue);
 const JiraPage = Schema.Struct({
   issues: Schema.Array(JiraIssue),
   nextPageToken: Schema.optional(Schema.NullOr(Schema.String)),
   isLast: Schema.optional(Schema.Boolean),
+});
+const CommentPage = Schema.Struct({
+  startAt: Schema.Number,
+  total: Schema.Number,
+  comments: Schema.Array(
+    Schema.Struct({
+      id: Schema.NonEmptyString,
+      author: Schema.optional(Schema.NullOr(Person)),
+      body: Schema.Unknown,
+      created: JiraTimestamp,
+    }),
+  ),
 });
 
 const fields = "summary,created,updated,resolutiondate,status,assignee,creator,labels,fixVersions";
@@ -107,6 +123,7 @@ function toSummary(issue: typeof JiraIssue.Type): Omit<TrackerIssueSummary, "jir
 
 export const make = Effect.gen(function* () {
   const jira = yield* JiraClient.JiraClient;
+  const sql = yield* SqlClient.SqlClient;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -128,6 +145,7 @@ export const make = Effect.gen(function* () {
       Effect.provideService(ProjectService.ProjectService, projects),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(SqlClient.SqlClient, sql),
     );
     return { ...toSummary(issue), jiraWork };
   });
@@ -222,12 +240,27 @@ export const make = Effect.gen(function* () {
           detail: "Ticket is outside this Jira project.",
         });
       }
-      const issue = yield* request(
+      const raw = yield* request(
         "detail",
         HttpClientRequest.get(`/rest/api/3/issue/${input.key}`).pipe(
-          HttpClientRequest.setUrlParams({ fields }),
+          HttpClientRequest.setUrlParams({
+            fields: `${fields},${JIRA_DETAIL_FIELDS.join(",")}`,
+            expand: "names",
+          }),
         ),
-        JiraIssue,
+        Schema.Unknown,
+      );
+      const issue = yield* decodeIssue(raw).pipe(
+        Effect.mapError(
+          (cause) =>
+            new IssueTrackerError({
+              tracker: JIRA_TRACKER,
+              operation: "detail",
+              reason: "failed",
+              detail: "Jira returned an invalid ticket.",
+              cause,
+            }),
+        ),
       );
       if (jiraProject(issue.key) !== project) {
         return yield* new IssueTrackerError({
@@ -239,13 +272,15 @@ export const make = Effect.gen(function* () {
       }
       const read = yield* readWork;
       const summary = yield* enrich(issue, read);
+      const page = yield* comments(input, undefined);
       return {
         ...summary,
-        body: "",
+        ...jiraIssueContent(raw),
+        commentCount: page.total,
         viewer: null,
         states: [summary.state],
-        comments: [],
-        commentsCursor: null,
+        comments: page.comments,
+        commentsCursor: page.nextCursor,
         events: [],
         linkedPullRequests: [],
         viewerPermissions: {
@@ -258,6 +293,46 @@ export const make = Effect.gen(function* () {
       };
     },
   );
+
+  const comments = Effect.fn("JiraIssueTracker.comments")(function* (
+    input: Parameters<IssueTrackerApi["getIssue"]>[0],
+    cursor: string | undefined,
+  ) {
+    if (
+      jiraProject(input.key) !== input.scope.toUpperCase() ||
+      (cursor !== undefined && !/^\d{1,9}$/u.test(cursor))
+    ) {
+      return yield* new IssueTrackerError({
+        tracker: JIRA_TRACKER,
+        operation: "comments",
+        reason: "not-found",
+        detail: "Invalid Jira ticket or comment page.",
+      });
+    }
+    const page = yield* request(
+      "comments",
+      HttpClientRequest.get(`/rest/api/3/issue/${input.key}/comment`).pipe(
+        HttpClientRequest.setUrlParams({
+          startAt: cursor ?? "0",
+          maxResults: "30",
+          orderBy: "-created",
+        }),
+      ),
+      CommentPage,
+    );
+    const next = page.startAt + page.comments.length;
+    return {
+      comments: [...page.comments].reverse().map((comment) => ({
+        id: comment.id,
+        author: comment.author ? toActor(comment.author) : null,
+        body: jiraDocument(comment.body),
+        createdAt: DateTime.formatIso(DateTime.makeUnsafe(Date.parse(comment.created))),
+        url: `https://${JIRA_HOST}/browse/${input.key}?focusedCommentId=${encodeURIComponent(comment.id)}`,
+      })),
+      total: page.total,
+      nextCursor: page.comments.length > 0 && next < page.total ? String(next) : null,
+    };
+  });
 
   return {
     kind: JIRA_TRACKER,
@@ -276,6 +351,6 @@ export const make = Effect.gen(function* () {
     getViewer,
     listIssues,
     getIssue,
-    getComments: () => Effect.succeed({ comments: [], nextCursor: null }),
+    getComments: (input) => comments(input, input.cursor),
   } satisfies IssueTrackerApi;
 });

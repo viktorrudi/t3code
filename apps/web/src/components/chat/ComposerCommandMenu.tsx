@@ -335,6 +335,7 @@ export function composerSuggestionOptionId(listId: string, itemId: string): stri
 
 const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
   path: msg("Files and folders"),
+  environment: msg("Environments"),
   "pull-request": msg("Pull requests"),
   "slash-command": msg("Commands"),
   skill: msg("Skills"),

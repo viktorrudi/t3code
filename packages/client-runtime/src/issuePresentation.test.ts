@@ -1,7 +1,7 @@
 import type { IssueDetail, IssueState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { issueWriteAccess } from "./issuePresentation.ts";
+import { issueDisplayActor, issueWriteAccess } from "./issuePresentation.ts";
 
 const workflow: ReadonlyArray<IssueState> = [
   { category: "open", name: "Backlog" },
@@ -38,5 +38,16 @@ describe("issueWriteAccess", () => {
     expect(issueWriteAccess(issue({ writable: false }), true).states).toEqual([]);
     expect(issueWriteAccess(issue({}), false).states).toEqual([]);
     expect(issueWriteAccess(issue({ states: [] }), true).states).toEqual([]);
+  });
+});
+
+describe("issueDisplayActor", () => {
+  it("shows Jira people by name and leaves other trackers and nameless actors alone", () => {
+    const person = { login: "712020:5f1c-account-id", name: "Jane Reporter", avatarUrl: null };
+    expect(issueDisplayActor("jira", person)?.login).toBe("Jane Reporter");
+    expect(issueDisplayActor("github", person)).toBe(person);
+    const nameless = { ...person, name: null };
+    expect(issueDisplayActor("jira", nameless)).toBe(nameless);
+    expect(issueDisplayActor("jira", null)).toBeNull();
   });
 });

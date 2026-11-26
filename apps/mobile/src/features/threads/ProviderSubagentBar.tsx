@@ -2,7 +2,13 @@ import {
   formatProviderSubagentStatus,
   type ProviderSubagentStatus,
 } from "@t3tools/client-runtime/state/thread-execution";
-import { isOrchestrationV2WorkActive, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import {
+  isOrchestrationV2WorkActive,
+  type EnvironmentId,
+  type ServerProvider,
+  type ThreadId,
+} from "@t3tools/contracts";
+import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import { T, useGT, useMessages, Var } from "gt-react-native";
 import { useState } from "react";
 import { View } from "react-native";
@@ -14,7 +20,10 @@ import { NativeChildWorkSheet } from "./NativeChildWorkSheet";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
 export function ProviderSubagentBar(props: {
-  readonly provider: { readonly driver: string; readonly iconUrl?: string | undefined } | null;
+  readonly provider: Pick<
+    ServerProvider,
+    "instanceId" | "driver" | "displayName" | "iconUrl"
+  > | null;
   readonly modelLabel: string;
   readonly effortLabel: string | null;
   readonly status: ProviderSubagentStatus | null;
@@ -48,6 +57,7 @@ export function ProviderSubagentBar(props: {
               iconUrl={props.provider.iconUrl}
               provider={props.provider.driver}
               size={16}
+              displayName={resolveProviderInstanceDisplayName(props.provider)}
             />
           ) : null}
           <Text numberOfLines={1} className="min-w-0 shrink font-t3-bold text-sm text-foreground">

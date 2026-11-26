@@ -27,6 +27,25 @@ export const openRouterIcon: ProviderIcon = {
   ],
 };
 
+// An original electric train front for LiteLLM instance branding.
+export const liteLlmIcon: ProviderIcon = {
+  viewBox: "0 0 24 24",
+  fill: { light: "#4F46E5", dark: "#A5B4FC" },
+  paths: [
+    { d: "M8 1h8v1.6H8V1ZM9.4 2.6h1.7l.9 1.5.9-1.5h1.7L12.8 5.4h-1.6L9.4 2.6Z" },
+    {
+      d: "M6 6h12a2 2 0 0 1 2 2v8.5a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V8a2 2 0 0 1 2-2ZM6.5 8.4h4.4v4.4H6.5V8.4ZM13.1 8.4h4.4v4.4h-4.4V8.4ZM6.9 16a1.1 1.1 0 1 0 2.2 0a1.1 1.1 0 1 0-2.2 0ZM14.9 16a1.1 1.1 0 1 0 2.2 0a1.1 1.1 0 1 0-2.2 0Z",
+      fillRule: "evenodd",
+    },
+    { d: "M6.6 20.3h2.6L8 23H5.4l1.2-2.7ZM14.8 20.3h2.6l1.2 2.7H16l-1.2-2.7Z" },
+  ],
+};
+
+// A gateway's public instance name can identify a brand different from its driver.
+export function providerInstanceBrandIcon(displayName: string): ProviderIcon | null {
+  return /(?<!\p{L})lite[\s_-]?llm(?!\p{L})/iu.test(displayName) ? liteLlmIcon : null;
+}
+
 export const providerClients = makeProviderClientRegistry([
   {
     driverKind: ProviderDriverKind.make("codex"),

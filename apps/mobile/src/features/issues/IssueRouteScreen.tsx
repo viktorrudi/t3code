@@ -1,6 +1,6 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { issueEventSentence } from "@t3tools/client-runtime/issue-presentation";
+import { issueDisplayActor, issueEventSentence } from "@t3tools/client-runtime/issue-presentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
@@ -11,6 +11,7 @@ import type {
   IssueReaction,
   IssueState,
   IssueSummary,
+  JiraIssueContext,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { T, useGT, useMessages, Var } from "gt-react-native";
@@ -167,9 +168,9 @@ function IssueIdentity(props: {
         {issue.title}
       </Text>
       <View className="flex-row items-center gap-2">
-        <PullRequestAvatar actor={issue.author} size={20} />
+        <PullRequestAvatar actor={issueDisplayActor(issue.tracker, issue.author)} size={20} />
         <Text className="min-w-0 flex-1 text-xs font-t3-medium" numberOfLines={1}>
-          {issue.author?.login ?? gt("Unknown author")}
+          {issueDisplayActor(issue.tracker, issue.author)?.login ?? gt("Unknown author")}
         </Text>
         <Text className="shrink text-right text-2xs text-foreground-muted" numberOfLines={1}>
           {issue.closedAt ? (
@@ -222,8 +223,10 @@ function IssueIdentity(props: {
         ) : null}
         {issue.assignees.map((actor) => (
           <View key={actor.login} className="flex-row items-center gap-1.5">
-            <PullRequestAvatar actor={actor} size={18} />
-            <Text className="text-xs font-t3-medium">{actor.login}</Text>
+            <PullRequestAvatar actor={issueDisplayActor(issue.tracker, actor)} size={18} />
+            <Text className="text-xs font-t3-medium">
+              {issueDisplayActor(issue.tracker, actor)?.login}
+            </Text>
           </View>
         ))}
         {canAssign ? (
@@ -411,9 +414,12 @@ function IssueCommentCard(props: {
   return (
     <View className="gap-3 rounded-2xl bg-grouped-card p-3">
       <View className="flex-row items-center gap-2">
-        <PullRequestAvatar actor={comment.author} size={22} />
+        <PullRequestAvatar
+          actor={issueDisplayActor(props.params.tracker, comment.author)}
+          size={22}
+        />
         <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
-          {comment.author?.login ?? gt("Unknown author")}
+          {issueDisplayActor(props.params.tracker, comment.author)?.login ?? gt("Unknown author")}
         </Text>
         <Text className="text-2xs text-foreground-tertiary">
           {relativeTime(comment.createdAt, undefined, messages)}
@@ -478,6 +484,21 @@ function IssueLoadingBody() {
       </View>
     </View>
   );
+}
+
+function JiraIssueContextLine({ context }: { readonly context: JiraIssueContext }) {
+  const gt = useGT();
+  const parts = [
+    context.issueType,
+    context.priority ? gt("Priority {priority}", { priority: context.priority }) : null,
+    context.reporter
+      ? gt("Reported by {name}", { name: context.reporter.name ?? context.reporter.login })
+      : null,
+    context.dueDate ? gt("Due {date}", { date: context.dueDate }) : null,
+    context.parent ? gt("Parent {key}", { key: context.parent.key }) : null,
+  ].filter((part): part is string => Boolean(part));
+  if (parts.length === 0) return null;
+  return <Text className="text-sm text-foreground-muted">{parts.join(" · ")}</Text>;
 }
 
 // Selecting another issue reuses this route, so the draft, older comments and errors are keyed.
@@ -702,6 +723,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                   onEditLabels={() => navigation.navigate("IssueLabels", identity)}
                   onEditAssignees={() => navigation.navigate("IssueAssignees", identity)}
                 />
+                {detail?.jiraDetails ? <JiraIssueContextLine context={detail.jiraDetails} /> : null}
                 {issue.jiraWork ? (
                   <View className="gap-2">
                     <Text className="text-sm text-foreground-muted">

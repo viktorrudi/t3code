@@ -5,6 +5,7 @@
 import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type {
+  JiraIssueContext,
   IssueState,
   IssueCandidates,
   IssueCapabilities,
@@ -81,6 +82,7 @@ export interface TrackerIssuePage {
 }
 
 export interface TrackerIssueDetail extends TrackerIssueSummary {
+  readonly jiraDetails?: JiraIssueContext | undefined;
   readonly body: string;
   readonly viewer: string | null;
   readonly viewerPermissions: IssueViewerPermissions;

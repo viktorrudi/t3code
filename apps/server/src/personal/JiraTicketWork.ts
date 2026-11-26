@@ -13,7 +13,8 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { jiraProject, jiraScopes, ticketRoot } from "./SensoneoJira.ts";
+import { listLinkedIssueThreads } from "../issue/linkedThreads.ts";
+import { JIRA_HOST, JIRA_TRACKER, jiraProject, jiraScopes, ticketRoot } from "./SensoneoJira.ts";
 
 const parseBadges = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
@@ -71,21 +72,34 @@ const parseTracking = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
       threads: Schema.Array(ThreadId),
+      unlinked: Schema.optional(Schema.Array(ThreadId)),
     }),
   ),
 );
 
 export const linkedJiraThreads = Effect.fn("JiraTicketWork.linkedThreads")(function* (key: string) {
-  if (jiraProject(key) === undefined) return [];
+  const scope = jiraProject(key);
+  if (scope === undefined) return [];
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const raw = yield* fs
     .readFileString(path.join(ticketRoot(), ".my-docs", key, "tracking.json"))
     .pipe(Effect.orElseSucceed(() => ""));
   const tracking = parseTracking(raw);
-  if (Option.isNone(tracking)) return [];
+  const native = yield* listLinkedIssueThreads({
+    tracker: JIRA_TRACKER,
+    host: JIRA_HOST,
+    scope,
+    key,
+  });
+  const local = Option.getOrElse(tracking, () => ({ threads: [], unlinked: [] }));
+  const excluded = new Set(local.unlinked ?? []);
   const threads = yield* Effect.forEach(
-    new Set(tracking.value.threads),
+    new Set(
+      [...local.threads, ...native.threads.map((thread) => thread.id)].filter(
+        (id) => !excluded.has(id),
+      ),
+    ),
     (id) => eligibleJiraThread(id, key),
     { concurrency: 4 },
   );

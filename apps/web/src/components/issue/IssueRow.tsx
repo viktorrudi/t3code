@@ -14,6 +14,7 @@ import {
   PullRequestLabelChip,
   PullRequestActorAvatar,
 } from "../pullRequest/pullRequestPresentation";
+import { issueDisplayActor } from "@t3tools/client-runtime/issue-presentation";
 import { JiraIssueWork } from "./JiraIssueWork";
 import { IssueStateGlyph, issueTrackerPresentation } from "./issuePresentation";
 
@@ -69,7 +70,7 @@ function IssueRowImpl({
                   {entry.assignees.slice(0, 3).map((assignee) => (
                     <PullRequestActorAvatar
                       key={assignee.login}
-                      actor={assignee}
+                      actor={issueDisplayActor(entry.tracker, assignee)}
                       className="ring-1 ring-background"
                     />
                   ))}
@@ -85,7 +86,7 @@ function IssueRowImpl({
           }
           meta={
             <>
-              <PullRequestRowAuthor actor={entry.author} />
+              <PullRequestRowAuthor actor={issueDisplayActor(entry.tracker, entry.author)} />
               {showTracker ? (
                 <span className="inline-flex shrink-0 items-center gap-1">
                   <tracker.Icon aria-hidden className="size-3" />

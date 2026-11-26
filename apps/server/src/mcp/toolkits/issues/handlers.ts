@@ -294,11 +294,16 @@ const make = Effect.gen(function* () {
           projectId: input.projectId ?? thread.projectId,
         });
         const existing = (thread.issues ?? []).find((link) => threadIssueKeysEqual(link, target));
-        if (existing === undefined) return { ...identityOf(target), wasLinked: false };
+        if (existing === undefined && target.tracker !== "jira")
+          return { ...identityOf(target), wasLinked: false };
         const { wasLinked } = yield* threadIssues
           .unlink({ threadId: thread.id, key: target })
           .pipe(Effect.catchCause(linkFailure));
-        return { ...identityOf(target), url: existing.url, wasLinked };
+        return {
+          ...identityOf(target),
+          ...(existing === undefined ? {} : { url: existing.url }),
+          wasLinked,
+        };
       }),
     ),
     list_thread_issues: McpToolAccess.reads((input) =>

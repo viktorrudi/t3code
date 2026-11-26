@@ -6,6 +6,7 @@
  * @module orchestration-v2/ThreadIssueService
  */
 import {
+  JiraIssueError,
   CommandId,
   threadIssueKeysEqual,
   type IssueLinkedThreadsResult,
@@ -22,6 +23,8 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { listLinkedIssueThreads } from "../issue/linkedThreads.ts";
+import * as JiraThreadLinks from "../personal/JiraThreadLinks.ts";
+import { JIRA_HOST } from "../personal/SensoneoJira.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 export interface LinkThreadIssueInput {
@@ -44,10 +47,16 @@ export class ThreadIssueService extends Context.Service<
     /** Linking a linked issue is a no-op. */
     readonly link: (
       input: LinkThreadIssueInput,
-    ) => Effect.Effect<{ readonly alreadyLinked: boolean }, Orchestrator.OrchestratorV2Error>;
+    ) => Effect.Effect<
+      { readonly alreadyLinked: boolean },
+      Orchestrator.OrchestratorV2Error | JiraIssueError
+    >;
     readonly unlink: (
       input: UnlinkThreadIssueInput,
-    ) => Effect.Effect<{ readonly wasLinked: boolean }, Orchestrator.OrchestratorV2Error>;
+    ) => Effect.Effect<
+      { readonly wasLinked: boolean },
+      Orchestrator.OrchestratorV2Error | JiraIssueError
+    >;
     /** Every thread the issue is linked to, most recently active first. */
     readonly linkedThreads: (
       key: ThreadIssueKey,
@@ -59,6 +68,7 @@ const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const random = yield* SecureRandom.SecureRandom;
   const sql = yield* SqlClient.SqlClient;
+  const jira = yield* JiraThreadLinks.JiraThreadLinks;
 
   const commandId = (tag: string, threadId: ThreadId) =>
     random.uuidV4().pipe(
@@ -77,6 +87,11 @@ const make = Effect.gen(function* () {
 
   const link: ThreadIssueService["Service"]["link"] = Effect.fn("ThreadIssueService.link")(
     function* (input) {
+      if (input.ref.tracker === "jira" && input.ref.host === JIRA_HOST) {
+        const alreadyLinked = yield* isLinked(input.threadId, input.ref);
+        yield* jira.set({ threadId: input.threadId, key: input.ref.key, linked: true });
+        return { alreadyLinked };
+      }
       if (yield* isLinked(input.threadId, input.ref)) return { alreadyLinked: true };
       yield* orchestrator.dispatch({
         type: "thread.issue.link",
@@ -98,6 +113,11 @@ const make = Effect.gen(function* () {
 
   const unlink: ThreadIssueService["Service"]["unlink"] = Effect.fn("ThreadIssueService.unlink")(
     function* (input) {
+      if (input.key.tracker === "jira" && input.key.host === JIRA_HOST) {
+        const wasLinked = yield* isLinked(input.threadId, input.key);
+        yield* jira.set({ threadId: input.threadId, key: input.key.key, linked: false });
+        return { wasLinked };
+      }
       if (!(yield* isLinked(input.threadId, input.key))) return { wasLinked: false };
       yield* orchestrator.dispatch({
         type: "thread.issue.unlink",

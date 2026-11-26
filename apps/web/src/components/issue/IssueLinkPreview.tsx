@@ -10,6 +10,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { PullRequestActorAvatar } from "../pullRequest/pullRequestPresentation";
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "../ui/preview-card";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { issueDisplayActor } from "@t3tools/client-runtime/issue-presentation";
 import { issueStatePresentation } from "./issuePresentation";
 
 export interface IssueLinkPreviewTarget {
@@ -77,7 +78,7 @@ export function IssueLinkPreviewFallback({
 function IssuePreviewCardBody({ detail }: { detail: IssueDetail }) {
   const state = issueStatePresentation(detail.state);
   const createdAt = <RelativeTime timestamp={detail.createdAt} />;
-  const author = detail.author;
+  const author = issueDisplayActor(detail.tracker, detail.author);
   const authorLabel =
     author === null
       ? "ghost"

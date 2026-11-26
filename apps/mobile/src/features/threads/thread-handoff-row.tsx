@@ -207,6 +207,7 @@ function HandoffEndpoint(props: {
           provider={provider?.driver ?? props.instanceId}
           iconUrl={provider?.iconUrl}
           size={12}
+          displayName={provider ? resolveProviderInstanceDisplayName(provider) : props.instanceId}
         />
       )}
       <Text numberOfLines={1} className="shrink text-xs text-foreground-muted">

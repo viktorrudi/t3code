@@ -1,4 +1,5 @@
 import { modelMentionMatches, modelMentionKey } from "../../personal/modelMentions";
+import { environmentMentionMatches } from "../../personal/environmentMentions";
 import type { AppModelOption } from "../../modelSelection";
 import { useGT, useMessages } from "gt-react";
 import {
@@ -37,7 +38,11 @@ import {
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useVisibleThreadShells } from "~/state/entities";
-import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
+import {
+  useConnectedEnvironmentIds,
+  useEnvironmentIdentities,
+  useEnvironmentMachines,
+} from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
 import {
   pullRequestEnvironment,
@@ -68,6 +73,7 @@ const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<Pull
 export function useComposerMenuItems({
   composerTrigger,
   modelSearch,
+  recentEnvironmentIds,
   environmentId,
   linkedEnvironments,
   gitCwd,
@@ -88,6 +94,7 @@ export function useComposerMenuItems({
   modelMentions,
 }: {
   readonly composerTrigger: ComposerTrigger | null;
+  readonly recentEnvironmentIds: readonly string[];
   readonly modelSearch: null | {
     entries: ReadonlyArray<ProviderInstanceEntry>;
     modelOptions: ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>;
@@ -145,6 +152,7 @@ export function useComposerMenuItems({
   // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();
+  const connectedEnvironmentIds = useConnectedEnvironmentIds();
   const offersMachines = useAtomValue(offersLinkedEnvironmentsAtom(environmentId));
   const mentionableEnvironments = environmentIdentities.map((identity) => ({
     ...identity,
@@ -219,6 +227,20 @@ export function useComposerMenuItems({
 
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
+    if (composerTrigger.kind === "environment") {
+      return environmentMentionMatches({
+        environments: mentionableEnvironments,
+        query: composerTrigger.query,
+        recentIds: recentEnvironmentIds,
+      }).map((environment) => ({
+        ...environment,
+        id: `environment:${environment.environmentId}`,
+        type: "environment",
+        description: connectedEnvironmentIds.includes(environment.environmentId)
+          ? gt("Connected")
+          : gt("Offline"),
+      }));
+    }
     if (composerTrigger.kind === "path") {
       if (modelSearch)
         return modelMentionMatches({ ...modelSearch, query: composerTrigger.query }).map(
@@ -444,6 +466,7 @@ export function useComposerMenuItems({
         pullRequestTriggerNumber !== debouncedPullRequestNumber ||
         exactPullRequestLookup.isPending));
   const emptyState = (() => {
+    if (composerTriggerKind === "environment") return gt("No matching environments.");
     if (composerTriggerKind === "skill") {
       return gt("No skills found. Try / to browse provider commands.");
     }

@@ -213,6 +213,45 @@ export const IssueViewerPermissions = Schema.Struct({
 });
 export type IssueViewerPermissions = typeof IssueViewerPermissions.Type;
 
+const JiraRelatedIssue = Schema.Struct({
+  key: Schema.String,
+  title: Schema.String,
+  url: Schema.String,
+  state: Schema.String,
+});
+
+export const JiraIssueContext = Schema.Struct({
+  projectName: Schema.NullOr(Schema.String),
+  issueType: Schema.NullOr(Schema.String),
+  priority: Schema.NullOr(Schema.String),
+  reporter: Schema.NullOr(IssueActor),
+  dueDate: Schema.NullOr(Schema.String),
+  resolution: Schema.NullOr(Schema.String),
+  components: Schema.Array(Schema.String),
+  affectedVersions: Schema.Array(Schema.String),
+  parent: Schema.NullOr(JiraRelatedIssue),
+  relatedIssues: Schema.Array(
+    Schema.Struct({ ...JiraRelatedIssue.fields, relationship: Schema.String }),
+  ),
+  attachments: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      url: Schema.String,
+      mimeType: Schema.NullOr(Schema.String),
+      size: NonNegativeInt,
+    }),
+  ),
+  fields: Schema.Array(
+    Schema.Struct({
+      id: Schema.optional(Schema.String),
+      name: Schema.String,
+      value: Schema.String,
+    }),
+  ),
+});
+export type JiraIssueContext = typeof JiraIssueContext.Type;
+
 export const IssueDetail = Schema.Struct({
   ...IssueSummary.fields,
   projectId: ProjectId,
@@ -229,6 +268,7 @@ export const IssueDetail = Schema.Struct({
   /** The signed-in account, so a comment edit is offered only on the viewer's own remarks. */
   viewer: Schema.NullOr(TrimmedNonEmptyString),
   body: Schema.String,
+  jiraDetails: Schema.optional(JiraIssueContext),
   reactions: Schema.optional(Schema.Array(IssueReaction)),
   comments: Schema.Array(IssueComment),
   /** Where older comments carry on; null once the conversation is whole. */

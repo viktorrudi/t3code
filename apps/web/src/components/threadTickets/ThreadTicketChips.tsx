@@ -1,11 +1,13 @@
 import { useGT } from "gt-react";
-import type { EnvironmentId, ThreadTicket, ThreadTicketDeploy } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadTicketDeploy } from "@t3tools/contracts";
 import type { MouseEvent, PointerEvent } from "react";
 
-import { cn } from "~/lib/utils";
+import { IssueGlyph } from "../issue/issuePresentation";
 import { Badge } from "../ui/badge";
+import { InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { DeployTargetMenu } from "./DeployTargetMenu";
+import type { ThreadJiraTicket } from "./threadJiraTickets.logic";
 
 const DEPLOY_BADGE_VARIANT = {
   success: "success",
@@ -67,34 +69,45 @@ export function TicketDeployBadge({
   );
 }
 
-/** Linked Jira tickets with their flag, key and deploy state. */
+/**
+ * A sidebar row's Jira tickets. A ticket the thread also links natively already shows as the
+ * row's issue chip, so only its deploy badge is added; a legacy annotation-only ticket gets one
+ * key chip that opens the same native issue view.
+ */
 export function ThreadTicketChips({
   tickets,
   environmentId,
-  className,
+  onOpen,
 }: {
-  tickets: ReadonlyArray<ThreadTicket>;
+  tickets: ReadonlyArray<ThreadJiraTicket>;
   environmentId?: EnvironmentId;
-  className?: string;
+  onOpen: (ticket: ThreadJiraTicket) => void;
 }) {
   const gt = useGT();
-  if (tickets.length === 0) return null;
+  const shown = tickets.filter((ticket) => ticket.annotated);
+  if (shown.length === 0) return null;
   return (
-    <span className={cn("inline-flex min-w-0 shrink-0 items-center gap-1.5", className)}>
-      {tickets.map((ticket) => (
-        <span key={ticket.key} className="inline-flex shrink-0 items-center gap-1">
-          <a
-            href={ticket.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={gt("Open {key} in Jira", { key: ticket.key })}
-            onPointerDown={keepFromRow}
-            onClick={keepFromRow}
-            className="inline-flex items-center gap-0.5 rounded-sm tabular-nums outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            {ticket.flag ? <span aria-hidden>{ticket.flag}</span> : null}
-            <span>{ticket.key}</span>
-          </a>
+    <>
+      {shown.map((ticket) => (
+        <span key={ticket.key} className="inline-flex min-w-0 items-center gap-1">
+          {ticket.link === null ? (
+            <span className="flex min-w-0 overflow-hidden">
+              <InlineButton
+                tone="muted"
+                aria-label={gt("Open {key}", { key: ticket.key })}
+                onPointerDown={keepFromRow}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpen(ticket);
+                }}
+              >
+                <IssueGlyph.issue aria-hidden className="size-3 shrink-0" />
+                <span className="max-w-16 truncate text-xs font-normal text-secondary-label tabular-nums">
+                  {ticket.key}
+                </span>
+              </InlineButton>
+            </span>
+          ) : null}
           {ticket.deploy ? (
             <TicketDeployBadge
               environmentId={environmentId}
@@ -104,6 +117,6 @@ export function ThreadTicketChips({
           ) : null}
         </span>
       ))}
-    </span>
+    </>
   );
 }

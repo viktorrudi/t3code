@@ -13,6 +13,7 @@ import {
   PullRequestLabelChip,
   PullRequestMetaLine,
 } from "../pullRequest/pullRequestPresentation";
+import { issueDisplayActor } from "@t3tools/client-runtime/issue-presentation";
 import { IssueStateGlyph, issueTrackerPresentation } from "./issuePresentation";
 
 /** The issue panel while its detail loads, showing what the list row already knows. */
@@ -52,7 +53,7 @@ export function IssueDetailGhost({ seed }: { seed?: IssueListEntry | null }) {
           {/* Leaves room for the edit button, so the title wraps the same once loaded. */}
           <h2 className="pr-7 text-base font-semibold leading-snug">{seed.title}</h2>
           <PullRequestMetaLine className="text-xs text-muted-foreground">
-            <PullRequestActorLabel actor={seed.author} />
+            <PullRequestActorLabel actor={issueDisplayActor(seed.tracker, seed.author)} />
             <span>
               <T>
                 opened <Var>{formatRelativeTimeLabel(seed.createdAt, undefined, messages)}</Var>
@@ -90,7 +91,10 @@ export function IssueDetailGhost({ seed }: { seed?: IssueListEntry | null }) {
               </span>
             ) : null}
             {seed.assignees.map((actor) => (
-              <PullRequestActorLabel key={actor.login} actor={actor} />
+              <PullRequestActorLabel
+                key={actor.login}
+                actor={issueDisplayActor(seed.tracker, actor)}
+              />
             ))}
           </div>
         </>

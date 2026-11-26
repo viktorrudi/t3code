@@ -1,4 +1,5 @@
 import type { EnvironmentIssueEntry } from "@t3tools/client-runtime/issue-list";
+import { issueDisplayActor } from "@t3tools/client-runtime/issue-presentation";
 import { useGT } from "gt-react-native";
 import { memo } from "react";
 import { Pressable, View } from "react-native";
@@ -44,7 +45,9 @@ export const IssueListRow = memo(function IssueListRow(props: {
           gt("Issue {key}", { key: item.displayKey }),
           item.title,
           status.label,
-          gt("by {author}", { author: item.author?.login ?? gt("unknown author") }),
+          gt("by {author}", {
+            author: issueDisplayActor(item.tracker, item.author)?.login ?? gt("unknown author"),
+          }),
           item.labels.length ? item.labels.map((label) => label.name).join(", ") : null,
           item.jiraWork?.deploy?.label,
           item.commentCount
@@ -75,7 +78,7 @@ export const IssueListRow = memo(function IssueListRow(props: {
           )}
         >
           <View className="flex-row items-center gap-1.5">
-            <PullRequestAvatar actor={item.author} size={16} />
+            <PullRequestAvatar actor={issueDisplayActor(item.tracker, item.author)} size={16} />
             <Text className={cn("min-w-0 flex-1 text-xs", muted)} numberOfLines={1}>
               {/* A Linear key already names its team; a git host's number needs the repository. */}
               {item.displayKey.startsWith(`${item.scope}-`)

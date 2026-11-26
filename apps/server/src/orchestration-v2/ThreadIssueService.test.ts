@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadIssueService from "./ThreadIssueService.ts";
+import * as JiraThreadLinks from "../personal/JiraThreadLinks.ts";
 
 const THREAD_ID = ThreadId.make("thread-1");
 
@@ -32,6 +33,7 @@ describe("ThreadIssueService", () => {
           Layer.provide(
             Layer.mergeAll(
               SqlitePersistence.layerMemory,
+              Layer.mock(JiraThreadLinks.JiraThreadLinks)({}),
               Layer.mock(Orchestrator.OrchestratorV2)({
                 getThreadShell: (threadId) =>
                   Effect.fail(new Orchestrator.OrchestratorProjectionError({ threadId })),

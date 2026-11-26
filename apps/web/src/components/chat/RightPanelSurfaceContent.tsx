@@ -209,6 +209,14 @@ export function RightPanelSurfaceContent(props: {
               ...(reference.host ? { host: reference.host } : {}),
             });
           }}
+          onSelectIssue={(reference) => {
+            const { host, ...target } = reference;
+            useRightPanelStore.getState().openIssue(threadRef, {
+              ...target,
+              ...(host ? { host } : {}),
+              ...(surface.environmentId ? { environmentId: surface.environmentId } : {}),
+            });
+          }}
         />
       );
     case "pull-requests":

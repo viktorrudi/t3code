@@ -1,4 +1,5 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import { serverUpdateFailureText } from "@t3tools/client-runtime/state/server";
 import { T, useGT, useMessages, Var } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
@@ -370,6 +371,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                               provider={provider.driver}
                               iconUrl={provider.iconUrl}
                               size={18}
+                              displayName={resolveProviderInstanceDisplayName(provider)}
                             />
                             <Text className="min-w-0 flex-1 text-base font-t3-medium text-foreground">
                               {provider.displayName ?? provider.driver}
