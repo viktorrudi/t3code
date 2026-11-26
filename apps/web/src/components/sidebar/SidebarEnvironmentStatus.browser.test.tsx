@@ -134,9 +134,8 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
   const details = (name: string) => page.getByRole("group", { name: `${name} details` });
   await userEvent.hover(primary);
   await expect.element(details("primary · This computer")).toBeVisible();
-  await expect.element(page.getByText("Working agents: 2 (this T3 server)")).toBeVisible();
   await expect.element(page.getByText("Collecting samples").first()).toBeVisible();
-  await userEvent.hover(page.getByText("Working agents: 2 (this T3 server)"));
+  await userEvent.hover(details("primary · This computer"));
   await expect.element(details("primary · This computer")).toBeVisible();
   await userEvent.unhover(primary);
   await expect.element(details("primary · This computer")).not.toBeInTheDocument();
@@ -157,9 +156,7 @@ it("polls only visible connected hosts, resumes after reconnect, and exposes det
   await expect.element(page.getByText("Statistics unavailable")).toBeVisible();
   await expect.element(details("primary · This computer")).not.toBeInTheDocument();
   await userEvent.tab();
-  await expect
-    .element(page.getByText("Working agents and free disk need a newer T3 server."))
-    .toBeVisible();
+  await expect.element(details("legacy-peer")).toBeVisible();
   await userEvent.tab();
   await expect.element(offline).toHaveFocus();
   await expect.element(page.getByText("Not connected; power state unknown")).toBeVisible();

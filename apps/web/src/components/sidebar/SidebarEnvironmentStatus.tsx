@@ -138,12 +138,6 @@ function EnvironmentStatus({
       : gt("Offline");
   const freshness =
     snapshot === null ? gt("Statistics unavailable") : metrics.stale ? gt("Stale") : "";
-  const scope =
-    snapshot?.scope === "constrained"
-      ? gt("RAM/CPU include environment limits")
-      : snapshot?.scope === undefined
-        ? gt("Resource scope unavailable")
-        : null;
   const agents =
     metrics.workingAgentCount === null ? unavailable : String(metrics.workingAgentCount);
   const disk =
@@ -162,10 +156,6 @@ function EnvironmentStatus({
       : gt("This computer")
     : null;
   const name = currentLabel === null ? environment.label : `${environment.label} · ${currentLabel}`;
-  const detailsNote =
-    metrics.detailsAvailability === "legacy"
-      ? gt("Working agents and free disk need a newer T3 server.")
-      : gt("Working agents and free disk are unavailable.");
   const label = connected
     ? [
         gt(
@@ -181,6 +171,7 @@ function EnvironmentStatus({
         ),
         freshness,
         batteryLabel,
+        snapshot?.scope === "constrained" ? gt("RAM/CPU include environment limits") : "",
       ]
         .filter(Boolean)
         .join(". ")
@@ -305,7 +296,9 @@ function EnvironmentStatus({
         <TooltipPopup side="right" align="start">
           <div className="grid gap-1 py-1">
             <span className="font-medium">{name}</span>
-            <span className="text-muted-foreground">{connected ? status : disconnectedStatus}</span>
+            {!connected ? (
+              <span className="text-muted-foreground">{disconnectedStatus}</span>
+            ) : null}
           </div>
         </TooltipPopup>
       </Tooltip>
@@ -314,7 +307,7 @@ function EnvironmentStatus({
           id={detailsId}
           role="group"
           aria-label={gt("{name} details", { name })}
-          className="grid gap-1.5 pt-0.5 pr-1 pb-1.5 pl-6.5 text-2xs text-sidebar-muted-foreground"
+          className="grid gap-1.5 pt-0.5 pb-1.5 text-2xs text-sidebar-muted-foreground"
         >
           {connected && (snapshot !== null || loading) ? (
             <SidebarEnvironmentHistory
@@ -326,28 +319,13 @@ function EnvironmentStatus({
               memoryEmptyLabel={emptyChartLabel(metrics.memoryPercent)}
             />
           ) : null}
-          <div className="grid gap-0.5">
-            {connected ? (
-              <>
-                <span>{status}</span>
-                {metrics.detailsAvailability === null ? (
-                  <>
-                    <span>{gt("Working agents: {agents} (this T3 server)", { agents })}</span>
-                    <span>{gt("Free disk: {disk} (server data volume)", { disk })}</span>
-                  </>
-                ) : snapshot !== null ? (
-                  <span>{detailsNote}</span>
-                ) : null}
-                {battery !== null ? <span>{batteryLabel}</span> : null}
-                {scope !== null && !loading ? <span>{scope}</span> : null}
-                {freshness !== "" && !loading ? (
-                  <span className={cn(metrics.stale && "text-warning")}>{freshness}</span>
-                ) : null}
-              </>
-            ) : (
-              <span>{gt("Not connected; power state unknown")}</span>
-            )}
-          </div>
+          {connected ? (
+            freshness !== "" && !loading ? (
+              <span className="text-warning">{freshness}</span>
+            ) : null
+          ) : (
+            <span className="text-warning">{gt("Not connected; power state unknown")}</span>
+          )}
         </div>
       ) : null}
     </div>
