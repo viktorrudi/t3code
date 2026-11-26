@@ -307,7 +307,7 @@ function EnvironmentStatus({
           id={detailsId}
           role="group"
           aria-label={gt("{name} details", { name })}
-          className="grid gap-1.5 pt-0.5 pb-1.5 text-2xs text-sidebar-muted-foreground"
+          className="grid gap-1.5 px-1 pt-0.5 pb-1.5 text-2xs text-sidebar-muted-foreground"
         >
           {connected && (snapshot !== null || loading) ? (
             <SidebarEnvironmentHistory
