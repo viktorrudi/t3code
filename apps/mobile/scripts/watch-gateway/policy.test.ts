@@ -1,5 +1,10 @@
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { authorize, credentialHash, page, requireProject, type WatchGrant } from "./policy.ts";
+import { readHubState, writePrivateJson } from "../push-hub/store.ts";
+import { watchPush } from "./push.ts";
 import { commandRunner, type CommandJournal } from "./commands.ts";
 
 describe("Watch gateway authority and retry boundary", () => {
@@ -18,6 +23,45 @@ describe("Watch gateway authority and retry boundary", () => {
     expect(() => requireProject(grant, "other-mac", "allowed")).toThrow();
     expect(() => requireProject(grant, "mac", "other")).toThrow();
     expect(() => requireProject(grant, "mac", "allowed", true)).toThrow();
+  });
+  it("unregisters only the Watch authenticated by the push credential", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-watch-push-"));
+    try {
+      const registered = {
+        ...grant,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+        pushCredentialHash: credentialHash("push"),
+      };
+      const file = NodePath.join(directory, "watch-notifications.json");
+      const state = await readHubState(file);
+      state.devices = [
+        {
+          id: grant.id,
+          token: "watch-apns",
+          credentialHash: registered.pushCredentialHash,
+          preview: false,
+        },
+        {
+          id: "other",
+          token: "other-apns",
+          credentialHash: credentialHash("other"),
+          preview: false,
+        },
+      ];
+      await writePrivateJson(file, state);
+      const push = await watchPush(
+        directory,
+        undefined,
+        async () => [registered],
+        () => undefined,
+      );
+      await expect(push.unregister("dedicated-watch-token")).rejects.toMatchObject({ status: 401 });
+      expect((await readHubState(file)).devices).toHaveLength(2);
+      await expect(push.unregister("push")).resolves.toEqual({ registered: false });
+      expect((await readHubState(file)).devices.map((device) => device.id)).toEqual(["other"]);
+    } finally {
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
   });
   it("rejects a cursor after a list revision or scope changes", () => {
     const first = page([1, 2, 3], null, "scope-a", 1);

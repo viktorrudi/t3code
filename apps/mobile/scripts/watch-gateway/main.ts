@@ -344,6 +344,7 @@ async function main() {
       if (req.headers.origin) throw new WatchError(403, "Browser requests are not supported.");
       const token = req.headers.authorization?.replace(/^Bearer /, "") ?? "";
       if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new WatchError(401, "Pair your Watch again.");
+      if (req.method === "DELETE" && req.url === "/watch/v1/devices") return push.unregister(token);
       if (req.method === "POST" && req.url === "/watch/v1/devices") {
         let raw = "";
         for await (const chunk of req) {
@@ -548,13 +549,16 @@ async function main() {
       const body = decodeBody(JSON.parse(raw.toString()));
       const key = commandIdentity(grant.id, body);
       const commandId = revision(key);
-      return once(key, revision([url.pathname, body]), async () => {
+      const target = newChat ? [url.pathname, e.config.environmentId, projectId] : [url.pathname];
+      const fingerprint = revision([...target, body]);
+      return once(key, fingerprint, async () => {
         if (newChat) {
           const p = e.projects.find((p) => p.id === projectId);
+          if (!p || p.archivedAt) throw new WatchError(404, "Project is no longer available.");
           const currentConfig = await connection.config();
-          const defaults = p && resolveProjectSettings(currentConfig.settings, p.id, p).settings;
+          const defaults = resolveProjectSettings(currentConfig.settings, p.id, p).settings;
 
-          if (!p || !defaults?.defaultModelSelection || defaults.defaultThreadEnvMode !== "local")
+          if (!defaults.defaultModelSelection || defaults.defaultThreadEnvMode !== "local")
             throw new WatchError(
               409,
               "Configure project defaults on iPhone. Worktree launch needs an explicit supported base.",

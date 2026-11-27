@@ -21,8 +21,9 @@ extension WatchStore {
         } catch { self.error = error.localizedDescription }
     }
     func registerPush(_ token: String) async {
+        guard let pushToken = api.setup?.pushToken else { return }
         do {
-            let _: PushRegistration = try await api.request("/watch/v1/devices", method: "POST", body: JSONSerialization.data(withJSONObject: ["token": token, "preview": true]), credential: api.setup?.pushToken)
+            let _: PushRegistration = try await api.request("/watch/v1/devices", method: "POST", body: JSONSerialization.data(withJSONObject: ["token": token, "preview": false]), credential: pushToken)
         } catch { self.error = error.localizedDescription }
     }
 }

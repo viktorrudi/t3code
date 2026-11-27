@@ -39,6 +39,12 @@ verify_archive() {
   [[ $(plist_value "$watch/Info.plist" WKCompanionAppBundleIdentifier) == "$bundle_id" ]] || fail "Watch app is not paired with this iPhone app."
   [[ $(plist_value "$watch/Info.plist" CFBundleShortVersionString) == "$version" ]] || fail "Watch version does not match the app."
   [[ $(plist_value "$watch/Info.plist" CFBundleVersion) == $(plist_value "$info" CFBundleVersion) ]] || fail "Watch build does not match the app."
+  local watch_signature watch_push_environment
+  watch_signature=$(codesign -dv --verbose=4 "$watch" 2>&1)
+  [[ $(sed -n 's/^TeamIdentifier=//p' <<< "$watch_signature") == "$team_id" ]] || fail "Unexpected Watch signing team."
+  watch_push_environment=$(codesign -d --entitlements :- "$watch" 2>/dev/null | plutil -extract aps-environment raw -) || fail "Watch archive is missing its push entitlement."
+  # Xcode can use development signing for the archive and re-sign for TestFlight export.
+  [[ $watch_push_environment == development || $watch_push_environment == production ]] || fail "Unexpected Watch push entitlement."
   codesign --verify --strict "$watch"
   codesign --verify --deep --strict "$app"
   local signature

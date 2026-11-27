@@ -1,3 +1,4 @@
+import CryptoKit
 import SwiftUI
 import WatchConnectivity
 import UserNotifications
@@ -15,6 +16,8 @@ import WatchKit
     @Published var undo: UndoAction?
     let api = WatchAPI()
     private var refreshInFlight = false
+    private var setupGeneration = 0
+    private static let disconnectedTokenKey = "watch.disconnectedTokenHash"
     private var session: WCSession?
     struct UndoAction { let row: ChatRow; let commandId: String; let until: Date }
     override init() {
@@ -25,37 +28,58 @@ import WatchKit
         if let raw = ProcessInfo.processInfo.environment["T3_WATCH_SIMULATOR_SETUP"] { api.setup = try? JSONDecoder().decode(WatchSetup.self, from: Data(raw.utf8)).validated() }
         #endif
         paired = api.setup != nil
-        if let data = UserDefaults.standard.data(forKey: "watch.overview") { overview = try? JSONDecoder().decode(Overview.self, from: data); overview?.items = overview?.items.map { $0.cached } ?? [] }
-        if let data = UserDefaults.standard.data(forKey: "watch.pendingRoute"), let route = try? JSONDecoder().decode(ChatRoute.self, from: data) { path = [route] }
+        if paired, let data = UserDefaults.standard.data(forKey: "watch.overview") { overview = try? JSONDecoder().decode(Overview.self, from: data); overview?.items = overview?.items.map { $0.cached } ?? [] }
+        if paired, let data = UserDefaults.standard.data(forKey: "watch.pendingRoute"), let route = try? JSONDecoder().decode(ChatRoute.self, from: data) { path = [route] }
         if WCSession.isSupported() { session = WCSession.default; session?.delegate = self; session?.activate() }
         UNUserNotificationCenter.current().delegate = self
     }
     func setUp(_ setup: WatchSetup) async {
+        setupGeneration += 1
+        let generation = setupGeneration
         do {
             let validated = try setup.validated()
-            api.setup = validated
-            let _: Overview = try await api.request("/watch/v1/overview")
+            let result: Overview = try await api.request("/watch/v1/overview", using: validated)
+            guard generation == setupGeneration else { return }
             try WatchKeychain.save(validated)
+            let previous = api.setup
+            if previous != validated {
+                clearAccountData()
+                if let previous, previous.url != validated.url || previous.pushToken != validated.pushToken {
+                    retireNotifications(previous)
+                }
+            }
+            api.setup = validated
             paired = true
+            gatewayAvailable = true
             error = nil
-            await refresh()
-        } catch { api.setup = WatchKeychain.load(); self.error = error.localizedDescription }
+            if previous != validated {
+                overview = result
+                UserDefaults.standard.set(try? JSONEncoder().encode(result), forKey: "watch.overview")
+            }
+        } catch {
+            guard generation == setupGeneration else { return }
+            self.error = error.localizedDescription
+        }
     }
     func refresh(more: Bool = false) async {
         guard paired, !refreshInFlight else { return }
         refreshInFlight = true; loading = true
         defer { refreshInFlight = false; loading = false }
         let requestedScope = scope, requestedShelf = shelf
+        let requestedSetup = api.setup
         var query = "/watch/v1/overview?shelf=\(requestedShelf)"
         if let scope = requestedScope { query += "&scope=\(scope.urlComponent)" }
         if more, let cursor = overview?.nextCursor { query += "&cursor=\(cursor.urlComponent)" }
         do {
             var result: Overview = try await api.request(query)
-            guard scope == requestedScope, shelf == requestedShelf else { return }
+            guard api.setup == requestedSetup, scope == requestedScope, shelf == requestedShelf else { return }
             if more { result.items = (overview?.items ?? []) + result.items }
             overview = result; error = nil; gatewayAvailable = true
             if let data = try? JSONEncoder().encode(result) { UserDefaults.standard.set(data, forKey: "watch.overview") }
-        } catch { self.error = error.localizedDescription; gatewayAvailable = false; overview?.items = overview?.items.map { $0.cached } ?? [] }
+        } catch {
+            guard api.setup == requestedSetup else { return }
+            self.error = error.localizedDescription; gatewayAvailable = false; overview?.items = overview?.items.map { $0.cached } ?? []
+        }
     }
     func choose(_ scope: String?) {
         self.scope = scope; shelf = "active"; overview = nil
@@ -80,12 +104,53 @@ import WatchKit
         } catch { self.error = error.localizedDescription }
     }
     func openNotification(_ route: ChatRoute) {
+        guard paired else { return }
         UserDefaults.standard.set(try? JSONEncoder().encode(route), forKey: "watch.pendingRoute")
         path = [route]
     }
     func forget() {
-        WatchKeychain.forget(); api.setup = nil; paired = false; overview = nil; path = []
-        UserDefaults.standard.removeObject(forKey: "watch.overview")
+        setupGeneration += 1
+        let previous = api.setup
+        if let token = (session?.receivedApplicationContext["watchCredential"] as? String) ?? previous?.token {
+            UserDefaults.standard.set(tokenDigest(token), forKey: Self.disconnectedTokenKey)
+        }
+        WatchKeychain.forget()
+        api.setup = nil
+        paired = false
+        clearAccountData()
+        retireNotifications(previous)
+    }
+
+    private func clearAccountData() {
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("watch.") && key != Self.disconnectedTokenKey {
+            defaults.removeObject(forKey: key)
+        }
+        try? FileManager.default.removeItem(at: FileManager.default.temporaryDirectory.appendingPathComponent("T3WatchVoice", isDirectory: true))
+        overview = nil
+        path = []
+        scope = nil
+        shelf = "active"
+        undo = nil
+        gatewayAvailable = false
+    }
+
+    private func tokenDigest(_ token: String) -> Data {
+        Data(SHA256.hash(data: Data(token.utf8)))
+    }
+
+    private func retireNotifications(_ setup: WatchSetup?) {
+        WKApplication.shared().unregisterForRemoteNotifications()
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        guard let setup, let pushToken = setup.pushToken else { return }
+        Task {
+            do {
+                let _: PushRegistration = try await api.request("/watch/v1/devices", method: "DELETE", credential: pushToken, using: setup)
+            } catch {
+                guard api.setup == nil else { return }
+                self.error = "Watch disconnected. If notifications continue, revoke the Watch invitation on your Mac."
+            }
+        }
     }
 }
 struct Sent: Codable { let environmentId, threadId: String }
@@ -97,6 +162,7 @@ extension WatchStore: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) { Task { @MainActor in await receive(applicationContext) } }
     private func receive(_ context: [String: Any]) async {
         guard let url = context["watchGatewayURL"] as? String, let token = context["watchCredential"] as? String else { return }
+        guard token != api.setup?.token, tokenDigest(token) != UserDefaults.standard.data(forKey: Self.disconnectedTokenKey) else { return }
         await setUp(WatchSetup(url: url, token: token, pushToken: context["watchPushCredential"] as? String))
     }
 }
@@ -108,6 +174,7 @@ extension WatchStore: UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         let incoming = notificationRoute(notification.request.content.userInfo)
         return await MainActor.run {
+            guard self.paired else { return [] }
             if let route = self.path.last, let incoming, incoming.threadId == route.threadId, incoming.environmentId == route.environmentId { return [] }
             return [.banner, .sound]
         }

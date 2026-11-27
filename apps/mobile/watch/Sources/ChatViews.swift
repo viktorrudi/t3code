@@ -176,10 +176,11 @@ struct ConversationView: View {
         }
     }
     private func load(earlier: Bool = false) async {
-        guard !busy else { return }; busy = true; defer { busy = false }
+        guard !busy, let setup = store.api.setup else { return }; busy = true; defer { busy = false }
         do {
             let endpoint = route.endpoint + (earlier ? "?before=\((conversation?.nextCursor ?? "").urlComponent)" : "")
-            var result: Conversation = try await store.api.request(endpoint)
+            var result: Conversation = try await store.api.request(endpoint, using: setup)
+            guard store.api.setup == setup, !Task.isCancelled else { return }
             if let previous = conversation {
                 if !earlier && historyLoaded { result.nextCursor = previous.nextCursor }
                 let all = earlier ? result.messages + previous.messages : previous.messages + result.messages
@@ -189,7 +190,18 @@ struct ConversationView: View {
             conversation = result; failure = nil; store.gatewayAvailable = true
             if let data = try? JSONEncoder().encode(result) { UserDefaults.standard.set(data, forKey: "watch.chat.\(route.key)") }
             UserDefaults.standard.removeObject(forKey: "watch.pendingRoute")
-        } catch { failure = error.localizedDescription; conversation?.row = conversation!.row.cached; store.gatewayAvailable = false }
+        } catch {
+            guard store.api.setup == setup, !Task.isCancelled else { return }
+            failure = error.localizedDescription
+            if let status = (error as? WatchFailure)?.status, [401, 403, 404].contains(status) {
+                conversation = nil
+                UserDefaults.standard.removeObject(forKey: "watch.chat.\(route.key)")
+                UserDefaults.standard.removeObject(forKey: "watch.pendingRoute")
+            } else {
+                conversation?.row = conversation!.row.cached
+                store.gatewayAvailable = false
+            }
+        }
     }
 }
 struct LongMessageText: View {

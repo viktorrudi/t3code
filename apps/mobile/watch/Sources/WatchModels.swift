@@ -49,7 +49,7 @@ struct Freshness: Codable { let name, asOf: String; var live: Bool }
 struct Counts: Codable { let snoozed, settled: Int }
 struct Overview: Codable { var items: [ChatRow]; let nextCursor: String?; let projects: [WatchProject]; let counts: Counts; var environments: [Freshness] }
 struct Conversation: Codable { var row: ChatRow; var messages: [WatchMessage]; var nextCursor: String? }
-struct WatchSetup: Codable {
+struct WatchSetup: Codable, Equatable {
     let url, token: String
     var pushToken: String? = nil
     func validated() throws -> WatchSetup {
@@ -59,7 +59,8 @@ struct WatchSetup: Codable {
 }
 struct WatchFailure: LocalizedError {
     let message: String
-    init(_ message: String) { self.message = message }
+    let status: Int?
+    init(_ message: String, status: Int? = nil) { self.message = message; self.status = status }
     var errorDescription: String? { message }
 }
 struct Draft: Codable {
@@ -79,26 +80,30 @@ extension String {
 
 @MainActor final class WatchAPI {
     var setup: WatchSetup?
-    private let session: URLSession = {
+    private let session = makeSession(requestTimeout: 30, resourceTimeout: 190)
+    private let voiceSession = makeSession(requestTimeout: 240, resourceTimeout: 270)
+
+    private static func makeSession(requestTimeout: TimeInterval, resourceTimeout: TimeInterval) -> URLSession {
         let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 190
+        config.timeoutIntervalForRequest = requestTimeout
+        config.timeoutIntervalForResource = resourceTimeout
         config.httpMaximumConnectionsPerHost = 2
         config.urlCache = nil
         return URLSession(configuration: config, delegate: NoRedirects(), delegateQueue: nil)
-    }()
-    func request<T: Decodable>(_ endpoint: String, method: String = "GET", body: Data? = nil, type: String = "application/json", credential: String? = nil) async throws -> T {
-        guard let setup, let url = URL(string: setup.url + endpoint) else { throw WatchFailure("Set up this Watch first.") }
+    }
+    func request<T: Decodable>(_ endpoint: String, method: String = "GET", body: Data? = nil, type: String = "application/json", credential: String? = nil, using candidate: WatchSetup? = nil) async throws -> T {
+        guard let setup = candidate ?? setup, let url = URL(string: setup.url + endpoint) else { throw WatchFailure("Set up this Watch first.") }
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.setValue("Bearer \(credential ?? setup.token)", forHTTPHeaderField: "Authorization")
         req.setValue(type, forHTTPHeaderField: "Content-Type")
         req.httpBody = body
-        let (data, response) = try await session.data(for: req)
+        let transport = type == "audio/mp4" ? voiceSession : session
+        let (data, response) = try await transport.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw WatchFailure("Gateway is unavailable.") }
         guard (200...299).contains(http.statusCode) else {
             let error = try? JSONDecoder().decode(ErrorBody.self, from: data)
-            throw WatchFailure(error?.error ?? (http.statusCode == 401 ? "Pair your Watch again. Access has expired or was revoked." : "Gateway unavailable. Your draft is kept."))
+            throw WatchFailure(error?.error ?? (http.statusCode == 401 ? "Pair your Watch again. Access has expired or was revoked." : "Gateway unavailable. Your draft is kept."), status: http.statusCode)
         }
         return try JSONDecoder().decode(T.self, from: data)
     }

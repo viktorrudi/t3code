@@ -30,6 +30,14 @@ export async function watchPush(
     grant !== undefined &&
     grant.expiresAt > Date.now() &&
     grant.projects[environmentId]?.includes(projectOf(environmentId, threadId) ?? "");
+  const requirePushGrant = async (token: string) => {
+    const grant = (await readGrants()).find(
+      (g) => g.pushCredentialHash && matchesCredential(token, g.pushCredentialHash),
+    );
+    if (!grant || grant.expiresAt <= Date.now())
+      throw new WatchError(401, "Notification registration expired. Pair this Watch again.");
+    return grant;
+  };
   return {
     register: (token: string, deviceToken: string, preview: boolean) =>
       transact(async () => {
@@ -38,11 +46,7 @@ export async function watchPush(
             503,
             "Direct Watch notifications are not configured on your Mac yet.",
           );
-        const grant = (await readGrants()).find(
-          (g) => g.pushCredentialHash && matchesCredential(token, g.pushCredentialHash),
-        );
-        if (!grant || grant.expiresAt <= Date.now())
-          throw new WatchError(401, "Notification registration expired. Pair this Watch again.");
+        const grant = await requirePushGrant(token);
         state.devices = state.devices.filter((d) => d.id !== grant.id && d.token !== deviceToken);
         state.devices.push({
           id: grant.id,
@@ -52,6 +56,14 @@ export async function watchPush(
         });
         await save();
         return { registered: true };
+      }),
+    unregister: (token: string) =>
+      transact(async () => {
+        const grant = await requirePushGrant(token);
+        state.devices = state.devices.filter((device) => device.id !== grant.id);
+        state.pending = state.pending.filter((job) => job.deviceId !== grant.id);
+        await save();
+        return { registered: false };
       }),
     observe: (
       environmentId: string,
