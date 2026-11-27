@@ -72,9 +72,15 @@ const cases = [
   },
   {
     name: "projects own scoped links without resolving another environment's IDs",
-    tracking: { threads: [], refs: [ref("scoped"), ref("foreign", "other-environment")] },
+    tracking: { threads: ["scoped"], refs: [ref("scoped"), ref("foreign", "other-environment")] },
     expected: ["scoped"],
     notRead: ["foreign"],
+  },
+  {
+    name: "treats an own scoped link without its legacy mirror as unlinked",
+    tracking: { threads: [], refs: [ref("scoped")] },
+    expected: [],
+    notRead: ["scoped"],
   },
   {
     name: "does not reclaim a legacy ID explicitly scoped to another environment",
@@ -115,7 +121,7 @@ const cases = [
   {
     name: "preserves valid legacy and scoped links beside malformed new entries",
     tracking: {
-      threads: ["legacy"],
+      threads: ["legacy", "scoped"],
       refs: [null, ref("scoped"), { threadId: "unscoped" }, ref("", "other-environment")],
       unlinkedRefs: "malformed",
     },
@@ -130,6 +136,12 @@ const cases = [
     },
     native: ["native", "linked"],
     expected: ["linked", "native"],
+  },
+  {
+    name: "keeps a native local relation beside a foreign unlink of the same ID",
+    tracking: { threads: [], unlinkedRefs: [ref("native", "other-environment")] },
+    native: ["native"],
+    expected: ["native"],
   },
   {
     name: "retains native local relations when the tracking record is invalid",

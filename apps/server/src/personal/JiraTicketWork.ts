@@ -113,7 +113,11 @@ export const linkedJiraThreads = Effect.fn("JiraTicketWork.linkedThreads")(funct
   const refs = trackingRefs(local.refs);
   const unlinkedRefs = trackingRefs(local.unlinkedRefs);
   const scoped = new Set([...refs, ...unlinkedRefs].map((ref) => ref.threadId));
-  const own = refs.filter((ref) => ref.environmentId === environmentId);
+  // Writers mirror own links into `threads`; a ref without its mirror disagrees and stays unlinked.
+  const legacyLinked = new Set(local.threads);
+  const own = refs.filter(
+    (ref) => ref.environmentId === environmentId && legacyLinked.has(ref.threadId),
+  );
   const excluded = new Set([
     ...(local.unlinked ?? []),
     ...unlinkedRefs.filter((ref) => ref.environmentId === environmentId).map((ref) => ref.threadId),
