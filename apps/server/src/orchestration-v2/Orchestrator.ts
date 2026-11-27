@@ -192,6 +192,7 @@ import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import { endSkillsAdmissionWait } from "../personal/skillsAdmissionNotice.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
@@ -13675,6 +13676,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "subagent",
           "assistant_message",
           "reasoning",
+          "system_notice",
         ],
         turnItemStatuses: ["pending", "running", "waiting"],
         // Stop reads root nodes and ends open ones; a settled leaf has nothing left to end.
@@ -13883,6 +13885,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           candidate.input === WORKSPACE_PREPARATION_INPUT &&
           candidate.status === "running",
       );
+      const admissionWait = endSkillsAdmissionWait(
+        projection.turnItems,
+        run.id,
+        "interrupted",
+        now,
+      );
+      if (admissionWait !== undefined) {
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          nodeId: rootNode.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: admissionWait,
+        });
+      }
       if (preparationItem !== undefined) {
         yield* emitEvent({
           type: "turn-item.updated",

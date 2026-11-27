@@ -41,6 +41,7 @@ import {
 import { withTurnStartReservation, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as SkillsAdmission from "../personal/SkillsAdmission.ts";
+import { endSkillsAdmissionWait } from "../personal/skillsAdmissionNotice.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -460,8 +461,12 @@ export const layer: Layer.Layer<
           updatedAt: now,
           ...input.item,
         };
+        const admissionWait = endSkillsAdmissionWait(turnItems, runId, "failed", now);
         const eventPayloads = [
           { type: "turn-item.updated", payload: item },
+          ...(admissionWait === undefined
+            ? []
+            : [{ type: "turn-item.updated" as const, payload: admissionWait }]),
           { type: "run.updated", payload: { ...run, status, ...started, completedAt: now } },
           {
             type: "run-attempt.updated",
@@ -623,14 +628,17 @@ export const layer: Layer.Layer<
         runId,
         signal: "skills-admission",
       });
+      const previousNotice = projection.turnItems.find((item) => item.id === admissionNoticeId);
       const admissionNoticeOrdinal =
+        previousNotice?.ordinal ??
         Math.max(
           0,
           ...projection.turnItems
             .filter((item) => item.runId === runId)
             .map((item) => item.ordinal),
         ) + 1;
-      let admissionWaitStartedAt: DateTime.Utc | undefined;
+      let admissionWaitStartedAt =
+        previousNotice?.status === "running" ? (previousNotice.startedAt ?? undefined) : undefined;
       const writeAdmissionNotice = Effect.fn("ProviderTurnStartService.writeAdmissionNotice")(
         function* (status: "running" | "completed") {
           const now = yield* DateTime.now;
@@ -651,8 +659,11 @@ export const layer: Layer.Layer<
             type: "system_notice",
             code: "skills_update_wait",
             level: "info",
-            title: "Waiting for skills update",
-            message: "Waiting for a skills update to finish before starting.",
+            title: status === "completed" ? "Skills update finished" : "Waiting for skills update",
+            message:
+              status === "completed"
+                ? "Skills update finished"
+                : "Waiting for a skills update to finish before starting.",
           };
           yield* eventSink.writeIfRunCurrent({
             threadId: run.threadId,
@@ -678,7 +689,7 @@ export const layer: Layer.Layer<
         .admitTurn({
           runId,
           onWait: Effect.gen(function* () {
-            admissionWaitStartedAt = yield* DateTime.now;
+            admissionWaitStartedAt ??= yield* DateTime.now;
             yield* writeAdmissionNotice("running");
           }).pipe(Effect.ignoreCause({ log: true })),
         })
@@ -2058,7 +2069,15 @@ export const layer: Layer.Layer<
                 }),
             persist: persistHandoff,
           });
-          if (!(yield* isCurrentAttemptInStatus("running"))) return;
+          if (!(yield* isCurrentAttemptInStatus("running"))) {
+            return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
+              driver: session.driver,
+              threadId: turnInput.threadId,
+              providerThreadId: turnInput.providerThread.id,
+              runId: turnInput.runId,
+              cause: "The provider start no longer owns the run.",
+            });
+          }
           const start = compact ? session.compactThread! : session.startTurn;
           // Like history, the side chat context waits for a turn that sends a prompt.
           const sideChatContext =

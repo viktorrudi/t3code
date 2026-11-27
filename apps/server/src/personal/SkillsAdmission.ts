@@ -14,9 +14,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import type { PlatformError } from "effect/PlatformError";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -40,18 +39,13 @@ const admitWithoutLock = Effect.fn("SkillsAdmission.admitWithoutLock")(function*
 
 // Off by default so tests and CLIs never touch the account's real lock; the
 // native server provides `layer`.
-interface SkillsAdmissionShape {
+export class SkillsAdmission extends Context.Reference<{
   /** Holds a turn reader in the caller's scope; waits while a skills apply runs. */
   readonly admitTurn: (input: {
     readonly runId: RunId;
     readonly onWait: Effect.Effect<void>;
   }) => Effect.Effect<void, never, Scope.Scope>;
-}
-
-export class SkillsAdmission extends Context.Reference<SkillsAdmissionShape>(
-  "t3/personal/SkillsAdmission",
-  { defaultValue: () => ({ admitTurn: admitWithoutLock }) },
-) {}
+}>("t3/personal/SkillsAdmission", { defaultValue: () => ({ admitTurn: admitWithoutLock }) }) {}
 
 const defaultLockDirectory = (home = NodeOS.userInfo().homedir) =>
   `${home}/.local/state/skills/common-lock`;
@@ -112,19 +106,27 @@ const makeSystemProbe = Effect.gen(function* () {
   return probe;
 });
 
-export const make = Effect.fn("SkillsAdmission.make")(function* (options: {
-  readonly directory: string;
+interface AdmissionOptions {
+  readonly directory?: string;
   readonly probe: LockProbe;
   readonly environmentId: EnvironmentId;
   readonly serverVersion: string;
-}) {
+}
+
+const makeReady = Effect.fn("SkillsAdmission.makeReady")(function* (options: AdmissionOptions) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
-  const { directory, probe } = options;
+  const { probe } = options;
+  const directory =
+    options.directory ??
+    (yield* Effect.try({
+      try: () => defaultLockDirectory(),
+      catch: () => "local-home" as const,
+    }));
   const start = yield* probe.start(process.pid);
   if (start === null) {
-    return yield* Effect.die(new Error("Skills admission cannot read this process start time."));
+    return yield* Effect.fail("process-start" as const);
   }
   const self = { pid: process.pid, start };
 
@@ -139,6 +141,16 @@ export const make = Effect.fn("SkillsAdmission.make")(function* (options: {
         SchemaError: () => Effect.succeed(null),
       }),
     );
+  const writeDurable = Effect.fn("SkillsAdmission.writeDurable")(function* (
+    temp: string,
+    text: string,
+  ) {
+    const file = yield* fileSystem.open(temp, { flag: "wx", mode: 0o600 });
+    yield* file.writeAll(new TextEncoder().encode(`${text}\n`));
+    yield* file.sync;
+  }, Effect.scoped);
+  const removeLockFile = (file: string) =>
+    fileSystem.remove(file, { force: true }).pipe(Effect.ignoreCause({ log: true }));
   const writeAtomically = Effect.fn("SkillsAdmission.writeAtomically")(function* (
     sub: string,
     prefix: string,
@@ -148,8 +160,10 @@ export const make = Effect.fn("SkillsAdmission.make")(function* (options: {
     const temp = path.join(directory, sub, `${prefix}${self.pid}-${id}`);
     const file = path.join(directory, sub, `${id}.json`);
     const text = yield* encodeJson({ nonce: id, ...self, ...data }).pipe(Effect.orDie);
-    yield* fileSystem.writeFileString(temp, `${text}\n`, { flag: "wx", mode: 0o600 });
-    yield* fileSystem.rename(temp, file);
+    yield* writeDurable(temp, text).pipe(
+      Effect.andThen(fileSystem.rename(temp, file)),
+      Effect.onExit(() => removeLockFile(temp)),
+    );
     return file;
   });
   const isStale = Effect.fn("SkillsAdmission.isStale")(function* (holder: Holder) {
@@ -166,14 +180,17 @@ export const make = Effect.fn("SkillsAdmission.make")(function* (options: {
     if (!(yield* fileSystem.exists(protocol))) {
       const temp = path.join(directory, `.protocol.tmp-${yield* random.uuidV4()}`);
       const text = yield* encodeJson({ version: PROTOCOL_VERSION }).pipe(Effect.orDie);
-      yield* fileSystem.writeFileString(temp, `${text}\n`, { flag: "wx", mode: 0o600 });
-      yield* fileSystem.link(temp, protocol).pipe(
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "AlreadyExists" ? Effect.void : Effect.fail(error),
-        }),
+      yield* writeDurable(temp, text).pipe(
+        Effect.andThen(
+          fileSystem.link(temp, protocol).pipe(
+            Effect.catchTags({
+              PlatformError: (error) =>
+                error.reason._tag === "AlreadyExists" ? Effect.void : Effect.fail(error),
+            }),
+          ),
+        ),
+        Effect.onExit(() => removeLockFile(temp)),
       );
-      yield* fileSystem.remove(temp, { force: true });
     }
     return yield* fileSystem.readFileString(protocol).pipe(
       Effect.flatMap((text) => decodeProtocol(text)),
@@ -201,20 +218,19 @@ export const make = Effect.fn("SkillsAdmission.make")(function* (options: {
   const clearStaleWriter = (owner: Holder) =>
     fileSystem.remove(path.join(directory, "writer", `${owner.nonce}.json`), { force: true });
 
+  if (!(yield* open())) return yield* Effect.fail("protocol" as const);
+  if ((yield* writerState()).state === "unknown")
+    return yield* Effect.fail("writer-unknown" as const);
   yield* Effect.acquireRelease(
-    open().pipe(
-      Effect.andThen(
-        writeAtomically("capabilities", ".capability.tmp-", {
-          kind: "server",
-          info: {
-            environmentId: options.environmentId,
-            serverVersion: options.serverVersion,
-            guardVersion: GUARD_VERSION,
-          },
-        }),
-      ),
-    ),
-    (file) => fileSystem.remove(file, { force: true }).pipe(Effect.ignore),
+    writeAtomically("capabilities", ".capability.tmp-", {
+      kind: "server",
+      info: {
+        environmentId: options.environmentId,
+        serverVersion: options.serverVersion,
+        guardVersion: GUARD_VERSION,
+      },
+    }),
+    removeLockFile,
   );
 
   const writerAllowsReaders = open().pipe(
@@ -223,30 +239,42 @@ export const make = Effect.fn("SkillsAdmission.make")(function* (options: {
         ? writerState().pipe(Effect.map(({ state }) => state === "free" || state === "stale"))
         : Effect.succeed(false),
     ),
+    Effect.orElseSucceed(() => false),
   );
-  const waitForChange = Effect.fn("SkillsAdmission.waitForChange")(function* () {
-    const changed = yield* Deferred.make<void>();
-    const ready = yield* Deferred.make<void>();
-    yield* fileSystem
-      .watch(directory, {
-        recursive: true,
-        onReady: () => Deferred.doneUnsafe(ready, Effect.void),
-      })
-      .pipe(
-        Stream.take(1),
-        Stream.runDrain,
-        Effect.ignore,
-        Effect.andThen(Deferred.succeed(changed, undefined)),
-        Effect.forkScoped,
-      );
-    yield* Deferred.await(ready).pipe(Effect.timeoutOption(STALE_RECHECK));
-    // Re-check after the watcher is installed so a release in between is not missed.
-    if (yield* writerAllowsReaders) return;
-    yield* Deferred.await(changed).pipe(Effect.timeoutOption(STALE_RECHECK));
-  }, Effect.scoped);
+  const waitForChange = Effect.fn("SkillsAdmission.waitForChange")(
+    function* () {
+      const changed = yield* Deferred.make<void>();
+      const ready = yield* Deferred.make<void>();
+      yield* fileSystem
+        .watch(directory, {
+          recursive: true,
+          onReady: () => Deferred.doneUnsafe(ready, Effect.void),
+        })
+        .pipe(
+          Stream.filter(
+            ({ path }) =>
+              path === "protocol.json" ||
+              path === "writer" ||
+              path.startsWith("writer/") ||
+              path.startsWith("writer.tmp-"),
+          ),
+          Stream.take(1),
+          Stream.tap(() => Deferred.succeed(changed, undefined)),
+          Stream.runDrain,
+          Effect.ignore,
+          Effect.forkScoped,
+        );
+      yield* Deferred.await(ready);
+      // Re-check after the watcher is installed so a release in between is not missed.
+      if (yield* writerAllowsReaders) return;
+      yield* Deferred.await(changed);
+    },
+    Effect.scoped,
+    Effect.timeoutOption(STALE_RECHECK),
+  );
 
   const tryAdmit = Effect.fn("SkillsAdmission.tryAdmit")(function* (runId: RunId) {
-    if (!(yield* open())) return false;
+    if (!(yield* open())) return "protocol" as const;
     const created = DateTime.formatIso(yield* DateTime.now);
     let transferred = false;
     return yield* Effect.acquireUseRelease(
@@ -263,44 +291,77 @@ export const make = Effect.fn("SkillsAdmission.make")(function* (options: {
             yield* clearStaleWriter(writer.owner);
             writer = yield* writerState();
           }
-          if (writer.state !== "free") return false;
+          if (writer.state !== "free") return writer.state === "held" ? "held" : "writer-unknown";
           yield* Effect.uninterruptible(
             Effect.gen(function* () {
-              yield* Effect.addFinalizer(() =>
-                fileSystem.remove(file, { force: true }).pipe(Effect.ignore),
-              );
+              yield* Effect.addFinalizer(() => removeLockFile(file));
               transferred = true;
             }),
           );
-          return true;
+          return "admitted" as const;
         }),
-      (file) => (transferred ? Effect.void : fileSystem.remove(file, { force: true })),
+      (file) => (transferred ? Effect.void : removeLockFile(file)),
     );
   });
 
-  const admitTurn = Effect.fn("SkillsAdmission.admitTurn")(
-    function* (input: { readonly runId: RunId; readonly onWait: Effect.Effect<void> }) {
-      let notified = false;
-      while (!(yield* tryAdmit(input.runId))) {
-        if (!notified) {
-          notified = true;
-          yield* input.onWait;
-        }
-        yield* waitForChange();
+  const admitTurn: (typeof SkillsAdmission)["Service"]["admitTurn"] = Effect.fn(
+    "SkillsAdmission.admitTurn",
+  )(function* (input) {
+    let notified = false;
+    let warned = false;
+    while (true) {
+      const state = yield* tryAdmit(input.runId).pipe(
+        Effect.catchTags({ PlatformError: () => Effect.succeed("filesystem" as const) }),
+      );
+      if (state === "admitted") return;
+      if (!warned && state !== "held") {
+        warned = true;
+        yield* Effect.logWarning("Skills admission deferred", {
+          runId: input.runId,
+          reason: state,
+        });
       }
-    },
-    // An unreadable lock directory never admits a turn silently; it keeps waiting.
-    (effect: Effect.Effect<void, PlatformError, Scope.Scope>, input) =>
-      effect.pipe(
-        Effect.tapCause((cause) =>
-          Effect.logWarning("Skills admission failed; retrying", { runId: input.runId, cause }),
-        ),
-        Effect.retry(Schedule.spaced(STALE_RECHECK)),
-        Effect.orDie,
-      ),
-  );
+      if (!notified) {
+        notified = true;
+        yield* input.onWait;
+      }
+      yield* waitForChange();
+    }
+  });
 
-  return { admitTurn } satisfies SkillsAdmissionShape;
+  return SkillsAdmission.of({ admitTurn });
+});
+
+export const make = Effect.fn("SkillsAdmission.make")(function* (options: AdmissionOptions) {
+  const initialized = yield* Effect.result(makeReady(options));
+  if (initialized._tag === "Success") return initialized.success;
+
+  const reason = typeof initialized.failure === "string" ? initialized.failure : "filesystem";
+  yield* Effect.logWarning("Skills admission unavailable; setup will retry", { reason });
+  const ready = yield* Deferred.make<(typeof SkillsAdmission)["Service"]>();
+  yield* Effect.gen(function* () {
+    while (true) {
+      yield* Effect.sleep(STALE_RECHECK);
+      const recovered = yield* Effect.result(makeReady(options));
+      if (recovered._tag === "Success") {
+        yield* Deferred.succeed(ready, recovered.success);
+        return;
+      }
+    }
+  }).pipe(Effect.forkScoped);
+
+  return SkillsAdmission.of({
+    admitTurn: Effect.fn("SkillsAdmission.awaitSetup")(function* (input) {
+      const current = yield* Deferred.poll(ready);
+      if (Option.isSome(current)) {
+        const service = yield* current.value;
+        return yield* service.admitTurn(input);
+      }
+      yield* input.onWait;
+      const service = yield* Deferred.await(ready);
+      yield* service.admitTurn({ ...input, onWait: Effect.void });
+    }),
+  });
 });
 
 export const layer = Layer.effect(
@@ -309,7 +370,6 @@ export const layer = Layer.effect(
     if (HostProcess.Platform.defaultValue() === "win32") return { admitTurn: admitWithoutLock };
     const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
     return yield* make({
-      directory: defaultLockDirectory(),
       probe: yield* makeSystemProbe,
       environmentId: yield* identity.getEnvironmentId,
       serverVersion: packageJson.version,

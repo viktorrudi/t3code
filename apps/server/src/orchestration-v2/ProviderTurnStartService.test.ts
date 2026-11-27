@@ -1516,10 +1516,12 @@ effectIt.effect.each(["normal", "compaction", "scheduled", "subagent", "side-cha
       }
       const waiting = yield* Deferred.make<void>();
       const released = yield* Deferred.make<void>();
+      const scopeClosed = yield* Deferred.make<void>();
       const fiber = yield* harness.start.pipe(
         Effect.provideService(SkillsAdmission.SkillsAdmission, {
           admitTurn: ({ onWait }) =>
             Effect.gen(function* () {
+              yield* Effect.addFinalizer(() => Deferred.succeed(scopeClosed, undefined));
               yield* onWait;
               yield* Deferred.succeed(waiting, undefined);
               yield* Deferred.await(released);
@@ -1532,21 +1534,26 @@ effectIt.effect.each(["normal", "compaction", "scheduled", "subagent", "side-cha
       expect(harness.startRootRun).not.toHaveBeenCalled();
       if (kind !== "normal") {
         yield* Fiber.interrupt(fiber);
+        expect(yield* Deferred.isDone(scopeClosed)).toBe(true);
         return;
       }
       yield* Deferred.succeed(released, undefined);
       yield* Fiber.join(fiber);
       expect(harness.open).toHaveBeenCalledOnce();
       expect(harness.startRootRun).toHaveBeenCalledOnce();
+      expect(yield* Deferred.isDone(scopeClosed)).toBe(true);
       expect(
         harness.events.flatMap((event) =>
           event.type === "turn-item.updated" &&
           event.payload.type === "system_notice" &&
           event.payload.code === "skills_update_wait"
-            ? [event.payload.status]
+            ? [{ status: event.payload.status, message: event.payload.message }]
             : [],
         ),
-      ).toEqual(["running", "completed"]);
+      ).toEqual([
+        { status: "running", message: "Waiting for a skills update to finish before starting." },
+        { status: "completed", message: "Skills update finished" },
+      ]);
     }),
 );
 
@@ -1802,7 +1809,6 @@ effectIt.effect("preserves a replacement committed before exhausted start settle
       startedAt: projection.updatedAt,
       completedAt: null,
     };
-    const turnIngested = yield* Deferred.make<void>();
     const storageFailure = new EventSink.EventSinkWriteError({
       eventCount: 5,
       cause: "terminal-write ownership query unavailable",
@@ -1838,12 +1844,7 @@ effectIt.effect("preserves a replacement committed before exhausted start settle
           }),
           IdAllocator.layer,
           ThreadCommandExecutor.layer,
-          Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: () =>
-              Effect.sync(() => {
-                harness.setProjection({ ...harness.projection(), providerTurns: [providerTurn] });
-              }).pipe(Effect.andThen(Deferred.succeed(turnIngested, undefined)), Effect.as([])),
-          }),
+          Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({}),
           ServerSettings.layerTest(),
         ),
       ),
@@ -1860,23 +1861,15 @@ effectIt.effect("preserves a replacement committed before exhausted start settle
             ...input,
             session: {
               ...input.session,
-              events: Stream.concat(
-                Stream.succeed({
-                  type: "provider_turn.updated" as const,
-                  driver: input.providerThread.driver,
-                  threadId: run.threadId,
-                  providerTurn,
-                }),
-                Stream.never,
-              ),
+              events: Stream.never,
               startTurn: () =>
                 Effect.gen(function* () {
-                  yield* Deferred.await(turnIngested);
                   const current = harness.projection();
                   expect(current.runs[0]?.status).toBe("running");
                   // Steering commits a new attempt while the original start still owns the lane.
                   harness.setProjection({
                     ...current,
+                    providerTurns: [providerTurn],
                     runs: [
                       {
                         ...current.runs[0]!,

@@ -91,6 +91,8 @@ export function systemNoticeLabel(
   resolve: MFunctionType = mFallback,
 ): string {
   if (item.code !== "skills_update_wait") return item.message;
+  if (item.status === "interrupted") return resolve(msg("Interrupted"));
+  if (item.status === "failed") return resolve(msg("Failed"));
   return item.status === "completed"
     ? resolve(msg("Skills update finished"))
     : resolve(msg("Waiting for a skills update to finish before starting."));

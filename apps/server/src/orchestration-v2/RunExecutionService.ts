@@ -1184,6 +1184,12 @@ export const layer: Layer.Layer<
         if (responseStreamingMode === null) {
           return;
         }
+        const touchMcpCredential = McpSessionRegistry.touchActiveMcpThread(input.run.threadId).pipe(
+          Effect.ignoreCause({
+            log: true,
+            message: "Failed to refresh MCP credential liveness.",
+          }),
+        );
         const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
         const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
         const latestProviderThread = yield* Ref.make(input.providerThread);
@@ -1220,7 +1226,7 @@ export const layer: Layer.Layer<
         const inheritedBackgroundTurnItems = yield* (
           input.loadInheritedBackgroundTurnItems?.() ?? Effect.succeed([])
         ).pipe(
-          Effect.onError(() => eventSubscription.close),
+          Effect.onExit((exit) => (Exit.isFailure(exit) ? eventSubscription.close : Effect.void)),
           Effect.mapError(
             (cause) =>
               new RunExecutionStartError({
@@ -1981,7 +1987,15 @@ export const layer: Layer.Layer<
           yield* trackChildLifecycle(event, deliveredEvent !== null);
           yield* scheduleIdleFlush;
         });
-        const providerEventFiber = yield* eventSink
+        // Either startup or ingestion can finish first; neither can release the other's reader.
+        let remaining = 2;
+        const releaseAdmission = Effect.suspend(() => {
+          remaining -= 1;
+          return remaining === 0 && input.admission !== undefined
+            ? Scope.close(input.admission.scope, Exit.void)
+            : Effect.void;
+        });
+        const providerEvents = eventSink
           .consumeProviderEvents(
             eventSubscription.events.pipe(
               Stream.merge(Stream.fromQueue(idleFlushTicks), { haltStrategy: "left" }),
@@ -2229,158 +2243,149 @@ export const layer: Layer.Layer<
             ),
             Effect.ensuring(endPreviewActivity),
             Effect.ensuring(eventSubscription.close),
-            Effect.ensuring(
-              input.admission === undefined
-                ? Effect.void
-                : Scope.close(input.admission.scope, Exit.void),
-            ),
-            (effect) =>
-              Effect.uninterruptibleMask((restore) =>
-                restore(effect).pipe(
-                  Effect.forkDetach,
-                  Effect.tap(() => input.admission?.handOff ?? Effect.void),
-                ),
-              ),
+            Effect.ensuring(releaseAdmission),
           );
 
-        // A provider turn is a sign that the session is still alive. Keep
-        // its already-issued MCP credential valid even when the agent goes
-        // a long time between browser-tool calls.
-        const touchMcpCredential = McpSessionRegistry.touchActiveMcpThread(input.run.threadId).pipe(
-          Effect.ignoreCause({
-            log: true,
-            message: "Failed to refresh MCP credential liveness.",
-          }),
-        );
-        yield* touchMcpCredential;
-        const appContext = yield* McpAppModelContext.forProvider(
-          mcpAppModelContext,
-          input.run.threadId,
-        );
-        const turnInput = {
-          appThread: input.appThread,
-          threadId: input.run.threadId,
-          runId: input.run.id,
-          runOrdinal: input.run.ordinal,
-          providerTurnOrdinal: input.providerTurnOrdinal,
-          ...(input.nativeThreadHasTurns === undefined
-            ? {}
-            : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
-          ...(input.run.restartContinuationOfRunId === undefined
-            ? {}
-            : {
-                restartContinuationOfRunId: input.run.restartContinuationOfRunId,
-              }),
-          attemptId: input.attemptId,
-          rootNodeId: input.rootNode.id,
-          providerThread: input.providerThread,
-          message: input.message,
-          modelSelection: input.modelSelection,
-          runtimePolicy: input.runtimePolicy,
-          ...(appContext.length === 0 ? {} : { appContext }),
-        };
-        // Check after the context read: ingestion can settle the run while
-        // it awaits. A failed ownership read fails the start below.
-        const shouldStart =
-          input.shouldStartProviderTurn === undefined
-            ? Exit.succeed(true)
-            : yield* Effect.exit(input.shouldStartProviderTurn());
-        if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
-          yield* Fiber.interrupt(providerEventFiber);
-          return;
-        }
-
-        const compact =
-          input.message.attachments.length === 0 &&
-          input.message.text.trim().toLowerCase() === "/compact";
-        const { message: _message, ...resumeInput } = turnInput;
-        const startTurn =
-          input.resume === true
-            ? (input.session.resumeTurn?.({ ...resumeInput, messageId: input.message.messageId }) ??
-              Effect.fail(
-                new ProviderAdapter.ProviderAdapterTurnStartError({
-                  driver: input.session.driver,
-                  threadId: input.run.threadId,
-                  providerThreadId: input.providerThread.id,
-                  runId: input.run.id,
-                  cause: new ProviderAdapter.ProviderResumeUnsupportedError({
-                    driver: input.session.driver,
-                    providerThreadId: input.providerThread.id,
-                  }),
+        const launch = Effect.fn("RunExecutionService.launchProviderTurn")(function* (
+          providerEventFiber: Fiber.Fiber<void, Effect.Error<typeof providerEvents>>,
+        ) {
+          yield* touchMcpCredential;
+          const appContext = yield* McpAppModelContext.forProvider(
+            mcpAppModelContext,
+            input.run.threadId,
+          );
+          const turnInput = {
+            appThread: input.appThread,
+            threadId: input.run.threadId,
+            runId: input.run.id,
+            runOrdinal: input.run.ordinal,
+            providerTurnOrdinal: input.providerTurnOrdinal,
+            ...(input.nativeThreadHasTurns === undefined
+              ? {}
+              : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
+            ...(input.run.restartContinuationOfRunId === undefined
+              ? {}
+              : {
+                  restartContinuationOfRunId: input.run.restartContinuationOfRunId,
                 }),
-              ))
-            : compact
-              ? (input.session.compactThread?.(turnInput) ??
+            attemptId: input.attemptId,
+            rootNodeId: input.rootNode.id,
+            providerThread: input.providerThread,
+            message: input.message,
+            modelSelection: input.modelSelection,
+            runtimePolicy: input.runtimePolicy,
+            ...(appContext.length === 0 ? {} : { appContext }),
+          };
+          const compact =
+            input.message.attachments.length === 0 &&
+            input.message.text.trim().toLowerCase() === "/compact";
+          const { message: _message, ...resumeInput } = turnInput;
+          const startTurn =
+            input.resume === true
+              ? (input.session.resumeTurn?.({
+                  ...resumeInput,
+                  messageId: input.message.messageId,
+                }) ??
                 Effect.fail(
                   new ProviderAdapter.ProviderAdapterTurnStartError({
                     driver: input.session.driver,
                     threadId: input.run.threadId,
                     providerThreadId: input.providerThread.id,
                     runId: input.run.id,
-                    cause: new ProviderAdapter.ProviderCompactionUnsupportedError({
+                    cause: new ProviderAdapter.ProviderResumeUnsupportedError({
                       driver: input.session.driver,
                       providerThreadId: input.providerThread.id,
                     }),
                   }),
                 ))
-              : input.session.startTurn(turnInput);
-        yield* Effect.andThen(shouldStart, startTurn).pipe(
-          // Wait for acceptance so abandoned startup cannot leave a refresher
-          // on the already-detached ingestion fiber.
-          Effect.tap(() =>
-            Fiber.await(providerEventFiber).pipe(
-              Effect.raceFirst(touchMcpCredential.pipe(Effect.delay("1 hour"), Effect.forever)),
-              Effect.forkDetach,
+              : compact
+                ? (input.session.compactThread?.(turnInput) ??
+                  Effect.fail(
+                    new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: input.session.driver,
+                      threadId: input.run.threadId,
+                      providerThreadId: input.providerThread.id,
+                      runId: input.run.id,
+                      cause: new ProviderAdapter.ProviderCompactionUnsupportedError({
+                        driver: input.session.driver,
+                        providerThreadId: input.providerThread.id,
+                      }),
+                    }),
+                  ))
+                : input.session.startTurn(turnInput);
+          const shouldStart =
+            input.shouldStartProviderTurn === undefined
+              ? Exit.succeed(true)
+              : yield* Effect.exit(input.shouldStartProviderTurn());
+          if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
+            yield* Fiber.interrupt(providerEventFiber);
+            return;
+          }
+          yield* Effect.andThen(shouldStart, startTurn).pipe(
+            // Wait for acceptance so abandoned startup cannot leave a refresher
+            // on the already-detached ingestion fiber.
+            Effect.tap(() =>
+              Fiber.await(providerEventFiber).pipe(
+                Effect.raceFirst(touchMcpCredential.pipe(Effect.delay("1 hour"), Effect.forever)),
+                Effect.forkDetach,
+              ),
             ),
-          ),
-          Effect.catchCause((cause) =>
-            Effect.logError("orchestration V2 provider turn start failed", {
-              runId: input.run.id,
-              cause,
-            }).pipe(
-              Effect.andThen(Fiber.interrupt(providerEventFiber)),
-              Effect.andThen(Ref.get(latestProviderThread)),
-              Effect.flatMap((providerThread) =>
-                Ref.get(latestTurnItemOrdinal).pipe(
-                  Effect.flatMap((latestItemOrdinal) =>
-                    Ref.get(openRunOwnedSubagents).pipe(
-                      Effect.flatMap((openSubagents) =>
-                        writeFinalRunEvents({
-                          run: input.run,
-                          rootNode: input.rootNode,
-                          checkpointScope: input.checkpointScope,
-                          providerThread,
-                          attempt: input.attempt,
-                          writeIfRunCurrent: {
-                            activeAttemptId: input.attempt.id,
-                            expectedStatus: "running",
-                          },
-                          openRunOwnedSubagents: openSubagents,
-                          terminal: makeFailedTerminalEvent(
-                            makeProviderFailure({
-                              cause: Cause.squash(cause),
-                              class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
-                            }),
-                            latestItemOrdinal + 1,
-                          ),
-                          failureItemPersisted: false,
-                          refreshAfterTurn,
-                        }),
-                      ),
-                    ),
+            Effect.catchCause((cause) =>
+              Effect.gen(function* () {
+                if (Cause.hasInterruptsOnly(cause)) return yield* Effect.interrupt;
+                yield* Effect.logError("orchestration V2 provider turn start failed", {
+                  runId: input.run.id,
+                  cause,
+                });
+                if ((yield* Ref.get(latestRootProviderTurn)) !== null) return;
+                yield* Fiber.interrupt(providerEventFiber);
+                const providerThread = yield* Ref.get(latestProviderThread);
+                const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
+                const openSubagents = yield* Ref.get(openRunOwnedSubagents);
+                yield* writeFinalRunEvents({
+                  run: input.run,
+                  rootNode: input.rootNode,
+                  checkpointScope: input.checkpointScope,
+                  providerThread,
+                  attempt: input.attempt,
+                  writeIfRunCurrent: {
+                    activeAttemptId: input.attempt.id,
+                    expectedStatus: "running",
+                  },
+                  openRunOwnedSubagents: openSubagents,
+                  terminal: makeFailedTerminalEvent(
+                    makeProviderFailure({
+                      cause: Cause.squash(cause),
+                      class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
+                    }),
+                    latestItemOrdinal + 1,
                   ),
-                ),
-              ),
-              Effect.mapError(
-                (writeCause) =>
-                  new RunExecutionStartError({
-                    commandId: input.commandId,
-                    runId: input.run.id,
-                    cause: { start: cause, write: writeCause },
-                  }),
-              ),
+                  failureItemPersisted: false,
+                  refreshAfterTurn,
+                }).pipe(
+                  Effect.mapError(
+                    (writeCause) =>
+                      new RunExecutionStartError({
+                        commandId: input.commandId,
+                        runId: input.run.id,
+                        cause: { start: cause, write: writeCause },
+                      }),
+                  ),
+                );
+              }),
             ),
-          ),
+          );
+        }, Effect.ensuring(releaseAdmission));
+        yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const providerEventFiber = yield* restore(providerEvents).pipe(Effect.forkDetach);
+            yield* input.admission?.handOff ?? Effect.void;
+            // A cancelled caller cannot tell whether the provider accepted the request.
+            const launchFiber = yield* restore(launch(providerEventFiber)).pipe(
+              Effect.forkIn(scope),
+            );
+            yield* restore(Fiber.join(launchFiber));
+          }),
         );
       }),
     } satisfies RunExecutionServiceV2Shape);

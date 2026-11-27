@@ -1890,7 +1890,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     message: Schema.String,
     level: Schema.optional(OrchestrationV2SystemNoticeLevel),
     /** Lets clients localize a known notice; `message` stays the fallback. Absent from older servers. */
-    code: Schema.optional(Schema.Literals(["skills_update_wait"])),
+    code: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2779,7 +2779,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("system_notice"),
     message: Schema.String,
     level: Schema.optional(OrchestrationV2SystemNoticeLevel),
-    code: Schema.optional(Schema.Literals(["skills_update_wait"])),
+    code: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

@@ -10,6 +10,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
 import * as SkillsAdmission from "./SkillsAdmission.ts";
@@ -80,6 +82,114 @@ it.layer(Layer.merge(NodeServices.layer, SecureRandom.layerWebCrypto))("SkillsAd
       yield* fileSystem.remove(path.join(directory, "writer", "apply.json"));
       yield* Fiber.join(fiber);
       expect(yield* list("readers")).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("ignores reader churn while a writer holds admission", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let watches = 0;
+      const { service, writer } = yield* setup().pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          watch: (directory, options) =>
+            Stream.unwrap(
+              Effect.sync(() => {
+                watches++;
+                options?.onReady?.();
+                const release = fileSystem
+                  .remove(path.join(directory, "writer", "apply.json"))
+                  .pipe(Effect.as({ _tag: "Remove" as const, path: "writer/apply.json" }));
+                return watches === 1
+                  ? Stream.concat(
+                      Stream.make({ _tag: "Remove" as const, path: "readers/another-turn.json" }),
+                      Stream.fromEffect(release),
+                    )
+                  : Stream.fromEffect(release);
+              }),
+            ),
+        }),
+      );
+      yield* writer("apply");
+      yield* service.admitTurn({ runId: RunId.make("reader-churn"), onWait: Effect.void });
+      expect(watches).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports one wait when the writer cannot be read and recovers after repair", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const watchReady = yield* Deferred.make<void>();
+      const changed = yield* Deferred.make<FileSystem.WatchEvent>();
+      const path = yield* Path.Path;
+      let notices = 0;
+      const { service, directory, list } = yield* setup().pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          watch: (_directory, options) =>
+            Stream.unwrap(
+              Effect.sync(() => options?.onReady?.()).pipe(
+                Effect.andThen(Deferred.succeed(watchReady, undefined)),
+                Effect.as(Stream.fromEffect(Deferred.await(changed))),
+              ),
+            ),
+        }),
+      );
+      const invalidWriter = path.join(directory, "writer");
+      yield* fileSystem.writeFileString(invalidWriter, "not a directory");
+      const observed = yield* Deferred.make<void>();
+      const fiber = yield* service
+        .admitTurn({
+          runId: RunId.make("writer-unreadable"),
+          onWait: Effect.sync(() => {
+            notices++;
+          }).pipe(Effect.andThen(Deferred.succeed(observed, undefined))),
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(observed);
+      yield* Deferred.await(watchReady);
+      expect(yield* list("readers")).toEqual([]);
+      yield* fileSystem.remove(invalidWriter);
+      yield* Deferred.succeed(changed, { _tag: "Remove" as const, path: "writer" });
+      yield* Fiber.join(fiber);
+      expect(notices).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("starts fail-closed without a capability and recovers once the self probe works", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = path.join(yield* fileSystem.makeTempDirectoryScoped(), "common-lock");
+      const recovered = yield* Deferred.make<void>();
+      const service = yield* SkillsAdmission.make({
+        directory,
+        probe: {
+          ...probe(),
+          start: () =>
+            Deferred.isDone(recovered).pipe(Effect.map((ready) => (ready ? START : null))),
+        },
+        environmentId: EnvironmentId.make("environment-test"),
+        serverVersion: "test",
+      });
+      const waiting = yield* Deferred.make<void>();
+      const run = yield* service
+        .admitTurn({
+          runId: RunId.make("during-setup-failure"),
+          onWait: Deferred.succeed(waiting, undefined),
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(waiting);
+      expect(yield* fileSystem.exists(path.join(directory, "capabilities"))).toBe(false);
+      yield* Deferred.succeed(recovered, undefined);
+      yield* TestClock.adjust("15 seconds");
+      yield* Fiber.join(run);
+      expect(yield* fileSystem.readDirectory(path.join(directory, "capabilities"))).toHaveLength(1);
+      yield* service.admitTurn({
+        runId: RunId.make("after-setup-recovery"),
+        onWait: Effect.die("an already initialized server should admit immediately"),
+      });
     }).pipe(Effect.scoped),
   );
 

@@ -2220,6 +2220,115 @@ it.effect("keeps ingesting a child thread's late background item completion", ()
   }),
 );
 
+it.effect("keeps a provider start in flight when Stop cancels the caller", () =>
+  Effect.gen(function* () {
+    const admissionScope = yield* Scope.make();
+    const released = yield* Deferred.make<void>();
+    const starting = yield* Deferred.make<void>();
+    const rejectStart = yield* Deferred.make<void>();
+    const supplierInterrupted = yield* Deferred.make<void>();
+    yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined)).pipe(
+      Scope.provide(admissionScope),
+    );
+
+    yield* runBackgroundItemScenario("stopped-during-start", () => Stream.never, {
+      admission: { scope: admissionScope, handOff: Effect.void },
+      startTurn: (input) =>
+        Effect.andThen(Deferred.succeed(starting, undefined), Deferred.await(rejectStart)).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ProviderAdapter.ProviderAdapterTurnStartError({
+                driver,
+                threadId: input.threadId,
+                providerThreadId: input.providerThread.id,
+                runId: input.runId,
+                cause: "provider rejected the pending start",
+              }),
+            ),
+          ),
+          Effect.onInterrupt(() => Deferred.succeed(supplierInterrupted, undefined)),
+        ),
+      stopWhileStarting: Effect.gen(function* () {
+        yield* Deferred.await(starting);
+        return Effect.gen(function* () {
+          assert.isFalse(yield* Deferred.isDone(supplierInterrupted));
+          assert.isFalse(yield* Deferred.isDone(released));
+          yield* Deferred.succeed(rejectStart, undefined);
+        });
+      }),
+    });
+    yield* Deferred.await(released);
+  }),
+);
+
+it.effect("interrupts an accepted provider turn reported after Stop and retains its reader", () =>
+  Effect.gen(function* () {
+    const scope = yield* Scope.make();
+    const released = yield* Deferred.make<void>();
+    const dispatched = yield* Deferred.make<void>();
+    const accepted = yield* Deferred.make<void>();
+    const stopped = yield* Ref.make(false);
+    const interrupted = yield* Deferred.make<ProviderTurnId>();
+    const terminal = yield* Deferred.make<void>();
+    const at = yield* DateTime.now;
+    yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined)).pipe(
+      Scope.provide(scope),
+    );
+
+    yield* runBackgroundItemScenario(
+      "accepted-after-stop",
+      (ids) =>
+        Stream.concat(
+          Stream.fromEffect(
+            Deferred.await(accepted).pipe(
+              Effect.as({
+                type: "provider_turn.updated" as const,
+                driver,
+                threadId: ids.threadId,
+                providerTurn: {
+                  id: ids.rootProviderTurnId,
+                  providerThreadId: ids.providerThreadId,
+                  nodeId: ids.rootNodeId,
+                  runAttemptId: ids.attemptId,
+                  nativeTurnRef: null,
+                  ordinal: 1,
+                  status: "running" as const,
+                  startedAt: at,
+                  completedAt: null,
+                },
+              }),
+            ),
+          ),
+          Stream.fromEffect(
+            Deferred.await(terminal).pipe(Effect.as(rootTerminalEvent(ids, "interrupted"))),
+          ),
+        ),
+      {
+        admission: { scope, handOff: Effect.void },
+        shouldStartProviderTurn: () => Ref.get(stopped).pipe(Effect.map((value) => !value)),
+        startTurn: () =>
+          Deferred.succeed(dispatched, undefined).pipe(Effect.andThen(Deferred.await(accepted))),
+        interruptTurn: ({ providerTurnId }) =>
+          Deferred.succeed(interrupted, providerTurnId).pipe(Effect.asVoid),
+        stopWhileStarting: Effect.gen(function* () {
+          yield* Deferred.await(dispatched);
+          yield* Ref.set(stopped, true);
+          return Effect.gen(function* () {
+            assert.isFalse(yield* Deferred.isDone(interrupted));
+            assert.isFalse(yield* Deferred.isDone(released));
+            yield* Deferred.succeed(accepted, undefined);
+            const id = yield* Deferred.await(interrupted);
+            assert.equal(id, ProviderTurnId.make("provider-turn:accepted-after-stop"));
+            assert.isFalse(yield* Deferred.isDone(released));
+            yield* Deferred.succeed(terminal, undefined);
+          });
+        }),
+      },
+    );
+    yield* Deferred.await(released);
+  }),
+);
+
 it.effect.each([null, "run:nested-sdk"] as const)(
   "releases a settled run when its live child transfers to another run (%s)",
   (nestedRunId) =>
@@ -4631,6 +4740,10 @@ function runBackgroundItemScenario(
     | Stream.Stream<ProviderAdapter.ProviderAdapterV2Event>,
   options?: {
     readonly admission?: RunExecutionService.RunAdmission;
+    readonly startTurn?: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"];
+    readonly interruptTurn?: ProviderAdapter.ProviderAdapterV2SessionRuntime["interruptTurn"];
+    readonly shouldStartProviderTurn?: () => Effect.Effect<boolean>;
+    readonly stopWhileStarting?: Effect.Effect<Effect.Effect<void>>;
     readonly onIngest?: (
       event: ProviderAdapter.ProviderAdapterV2Event,
       write: { readonly inSharedCommit: boolean },
@@ -4745,8 +4858,11 @@ function runBackgroundItemScenario(
 
     yield* Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
-      yield* runExecution.startRootRun({
+      const start = runExecution.startRootRun({
         ...(options?.admission === undefined ? {} : { admission: options.admission }),
+        ...(options?.shouldStartProviderTurn === undefined
+          ? {}
+          : { shouldStartProviderTurn: options.shouldStartProviderTurn }),
         commandId: CommandId.make(`command:${key}`),
         appThread: rootAppThread(ids.threadId),
         providerSessionId: ProviderSessionId.make(`session:${key}`),
@@ -4776,7 +4892,8 @@ function runBackgroundItemScenario(
               close: Deferred.succeed(ingestionDone, undefined),
             };
           }),
-          startTurn: () => Effect.void,
+          startTurn: options?.startTurn ?? (() => Effect.void),
+          interruptTurn: options?.interruptTurn,
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: {
           id: ids.runId,
@@ -4823,6 +4940,15 @@ function runBackgroundItemScenario(
           },
         },
       });
+      if (options?.stopWhileStarting === undefined) {
+        yield* start;
+      } else {
+        const fiber = yield* start.pipe(Effect.forkChild);
+        const afterStop = yield* options.stopWhileStarting;
+        yield* Fiber.interrupt(fiber);
+        yield* afterStop;
+        yield* Deferred.await(ingestionDone);
+      }
     }).pipe(Effect.provide(layerTest));
 
     // No timeout: tests advance the TestClock, which would fire it early.
