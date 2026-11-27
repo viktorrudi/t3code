@@ -41,6 +41,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { CodexAppServerRequestError } from "effect-codex-app-server/errors";
@@ -2179,14 +2180,36 @@ it.effect("keeps ingesting while the last stored root snapshot reports pending w
 
 it.effect("keeps ingesting a child thread's late background item completion", () =>
   Effect.gen(function* () {
-    const observed = yield* runBackgroundItemScenario("bg-child-item", (ids) => [
-      childThreadCreatedEvent(ids),
-      subagentEvent(ids, "running"),
-      childBackgroundTurnItemEvent(ids, "running", 1),
-      rootTerminalEvent(ids, "completed"),
-      subagentEvent(ids, "completed"),
-      childBackgroundTurnItemEvent(ids, "completed", 2),
-    ]);
+    const admissionScope = yield* Scope.make();
+    const released = yield* Deferred.make<void>();
+    let handedOff = false;
+    yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined)).pipe(
+      Scope.provide(admissionScope),
+    );
+    const held = Deferred.isDone(released).pipe(Effect.map((done) => assert.isFalse(done)));
+    const observed = yield* runBackgroundItemScenario(
+      "bg-child-item",
+      (ids) => [
+        childThreadCreatedEvent(ids),
+        subagentEvent(ids, "running"),
+        childBackgroundTurnItemEvent(ids, "running", 1),
+        rootTerminalEvent(ids, "completed"),
+        subagentEvent(ids, "completed"),
+        childBackgroundTurnItemEvent(ids, "completed", 2),
+      ],
+      {
+        admission: {
+          scope: admissionScope,
+          handOff: Effect.sync(() => {
+            handedOff = true;
+          }),
+        },
+        onFinalized: () => held,
+        onIngest: () => held,
+      },
+    );
+    assert.isTrue(handedOff);
+    yield* Deferred.await(released);
     assert.deepEqual(observed, [
       "subagent:running",
       "turn_item:running",
@@ -4607,6 +4630,7 @@ function runBackgroundItemScenario(
     | ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>
     | Stream.Stream<ProviderAdapter.ProviderAdapterV2Event>,
   options?: {
+    readonly admission?: RunExecutionService.RunAdmission;
     readonly onIngest?: (
       event: ProviderAdapter.ProviderAdapterV2Event,
       write: { readonly inSharedCommit: boolean },
@@ -4722,6 +4746,7 @@ function runBackgroundItemScenario(
     yield* Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
+        ...(options?.admission === undefined ? {} : { admission: options.admission }),
         commandId: CommandId.make(`command:${key}`),
         appThread: rootAppThread(ids.threadId),
         providerSessionId: ProviderSessionId.make(`session:${key}`),

@@ -870,6 +870,8 @@
   "2605da0149cd15f1": "Compactando el contexto",
   "39a82db18ca50c21": "Contexto compactado de {before} → {after} tokens",
   "885ae08a2160a158": "Contexto compactado",
+  "db986d42cd701c4c": "Actualización de habilidades finalizada",
+  "d217a938cb47e53f": "Esperando a que termine la actualización de habilidades antes de empezar.",
   "3ab6b281a0991766": "{count, plural, =1 {Se comprobaron las pull requests vinculadas} other {Se comprobaron las pull requests vinculadas {count} veces}}",
   "857e92a89b6b6257": "{count, plural, one {Se leyó {count} archivo} other {Se leyeron {count} archivos}}",
   "466ac7fcdb97bb76": "{count, plural, one {Se cambió {count} archivo} other {Se cambiaron {count} archivos}}",
@@ -11806,6 +11808,7 @@
   "1b65987f45c3b5af": "Este Mac",
   "6627f5d804bac724": "Este ordenador",
   "12c6ce554c5f1891": "{name}: {status}. RAM {memory}, agentes activos {agents}, espacio libre {disk}. CPU: {cpu}",
+  "81b50cc590e51157": "RAM/CPU incluyen límites del entorno",
   "c7f97997904456b8": "Sin muestras recientes",
   "46d7a65d44805036": "Recopilando muestras",
   "efc171d19a234c6f": "T3 antiguo",
@@ -12351,6 +12354,5 @@
   "27d76249d09eb69f": "Guía de revisión lista",
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
-  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
-  "81b50cc590e51157": "RAM/CPU incluyen límites del entorno"
+  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión"
 }

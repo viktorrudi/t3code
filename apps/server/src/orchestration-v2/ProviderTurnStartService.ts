@@ -31,6 +31,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../config.ts";
 import {
@@ -39,6 +40,7 @@ import {
 } from "./Adapters/ClaudeAdapterV2.ts";
 import { withTurnStartReservation, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as SkillsAdmission from "../personal/SkillsAdmission.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -282,6 +284,7 @@ export const layer: Layer.Layer<
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+    const skillsAdmission = yield* SkillsAdmission.SkillsAdmission;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
@@ -509,13 +512,14 @@ export const layer: Layer.Layer<
       },
     );
 
-    const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (
+    const startAdmitted = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (
       input: {
         readonly threadId: ThreadId;
         readonly runId: RunId;
         readonly willRetry?: boolean;
       },
       captureStartingRun: (run: OrchestrationV2Run) => void,
+      admission: RunExecutionService.RunAdmission,
     ) {
       const { runId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
@@ -612,6 +616,75 @@ export const layer: Layer.Layer<
           runId,
           cause: `Run ${runId} is missing its execution projection state.`,
         });
+      }
+      // Before provider sessions and skill discovery: a skills apply must not
+      // change installed skills while this run can read them.
+      const admissionNoticeId = idAllocator.derive.runSignalTurnItem({
+        runId,
+        signal: "skills-admission",
+      });
+      const admissionNoticeOrdinal =
+        Math.max(
+          0,
+          ...projection.turnItems
+            .filter((item) => item.runId === runId)
+            .map((item) => item.ordinal),
+        ) + 1;
+      let admissionWaitStartedAt: DateTime.Utc | undefined;
+      const writeAdmissionNotice = Effect.fn("ProviderTurnStartService.writeAdmissionNotice")(
+        function* (status: "running" | "completed") {
+          const now = yield* DateTime.now;
+          const notice: OrchestrationV2TurnItem = {
+            id: admissionNoticeId,
+            threadId: run.threadId,
+            runId,
+            nodeId: rootNode.id,
+            providerThreadId: providerThread.id,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: admissionNoticeOrdinal,
+            status,
+            startedAt: admissionWaitStartedAt ?? now,
+            completedAt: status === "completed" ? now : null,
+            updatedAt: now,
+            type: "system_notice",
+            code: "skills_update_wait",
+            level: "info",
+            title: "Waiting for skills update",
+            message: "Waiting for a skills update to finish before starting.",
+          };
+          yield* eventSink.writeIfRunCurrent({
+            threadId: run.threadId,
+            runId,
+            activeAttemptId: attempt.id,
+            expectedStatus: "starting",
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId: run.threadId }),
+                type: "turn-item.updated" as const,
+                threadId: run.threadId,
+                runId,
+                nodeId: rootNode.id,
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: now,
+                payload: notice,
+              },
+            ],
+          });
+        },
+      );
+      yield* skillsAdmission
+        .admitTurn({
+          runId,
+          onWait: Effect.gen(function* () {
+            admissionWaitStartedAt = yield* DateTime.now;
+            yield* writeAdmissionNotice("running");
+          }).pipe(Effect.ignoreCause({ log: true })),
+        })
+        .pipe(Scope.provide(admission.scope));
+      if (admissionWaitStartedAt !== undefined) {
+        yield* writeAdmissionNotice("completed").pipe(Effect.ignoreCause({ log: true }));
       }
       if (
         carriedSideChatHandoffs.length > 0 &&
@@ -2091,6 +2164,7 @@ export const layer: Layer.Layer<
           ? session
           : makeDeliverySession(session, startWithHandoffs);
       return runExecution.startRootRun({
+        admission,
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
         providerSessionId,
@@ -2153,6 +2227,17 @@ export const layer: Layer.Layer<
           const captureStartingRun = (run: OrchestrationV2Run) => {
             startingRun = run;
           };
+          // The run's lifecycle closes this once it took it over; otherwise start does.
+          const admissionScope = yield* Scope.make();
+          let admissionHandedOff = false;
+          const admission: RunExecutionService.RunAdmission = {
+            scope: admissionScope,
+            handOff: Effect.sync(() => {
+              admissionHandedOff = true;
+            }),
+          };
+          const start = (startInput: typeof input, capture: (run: OrchestrationV2Run) => void) =>
+            startAdmitted(startInput, capture, admission);
           return yield* Effect.gen(function* () {
             // Storage cleanup removes worktrees under the same lease. Only startup
             // holds it; the provider turn runs after it is released.
@@ -2206,6 +2291,9 @@ export const layer: Layer.Layer<
                         }),
                   }),
                 ),
+            ),
+            Effect.onExit((exit) =>
+              admissionHandedOff ? Effect.void : Scope.close(admissionScope, exit),
             ),
           );
         },

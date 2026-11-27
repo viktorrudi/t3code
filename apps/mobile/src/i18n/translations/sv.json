@@ -870,6 +870,8 @@
   "2605da0149cd15f1": "Komprimerar kontext",
   "39a82db18ca50c21": "Kontexten komprimerades {before} → {after} token",
   "885ae08a2160a158": "Kontexten komprimerades",
+  "db986d42cd701c4c": "Kompetensuppdateringen är klar",
+  "d217a938cb47e53f": "Väntar på att kompetensuppdateringen ska slutföras innan starten.",
   "3ab6b281a0991766": "{count, plural, =1 {Kontrollerade länkade pull requests} other {Kontrollerade länkade pull requests {count} gånger}}",
   "857e92a89b6b6257": "{count, plural, one {Läste {count} fil} other {Läste {count} filer}}",
   "466ac7fcdb97bb76": "{count, plural, one {Ändrade {count} fil} other {Ändrade {count} filer}}",

@@ -31,6 +31,7 @@ import {
   summarizeToolGroup,
   toolGroupSummaryKind,
   workEntriesViewedImagePaths,
+  systemNoticeLabel,
   type ToolGroupSummaryKind,
   type WorkLogPresentationEntry,
   type WorkLogToolLifecycleStatus,
@@ -293,6 +294,8 @@ export function workEntryRowLabel(
   resolve: MessageResolver = m,
 ): string {
   if (entry.itemType === "fork") return entry.label;
+  if (entry.structuredPayload?.type === "system_notice")
+    return systemNoticeLabel(entry.structuredPayload, resolve);
   if (expanded && entry.itemType === "reasoning")
     return entry.toolLifecycleStatus === "inProgress"
       ? resolve(msg("Thinking"))

@@ -37,6 +37,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -631,7 +632,14 @@ export const RunExecutionServiceV2Error = Schema.Union([
 ]);
 export type RunExecutionServiceV2Error = typeof RunExecutionServiceV2Error.Type;
 
+/** A run's skills common-lock reader; the run lifecycle releases it once handed off. */
+export interface RunAdmission {
+  readonly scope: Scope.Closeable;
+  readonly handOff: Effect.Effect<void>;
+}
+
 export interface RunExecutionServiceV2StartRootRunInput {
+  readonly admission?: RunAdmission;
   readonly commandId: CommandId;
   readonly appThread: OrchestrationV2AppThread;
   readonly providerSessionId: ProviderSessionId;
@@ -2221,7 +2229,18 @@ export const layer: Layer.Layer<
             ),
             Effect.ensuring(endPreviewActivity),
             Effect.ensuring(eventSubscription.close),
-            Effect.forkDetach,
+            Effect.ensuring(
+              input.admission === undefined
+                ? Effect.void
+                : Scope.close(input.admission.scope, Exit.void),
+            ),
+            (effect) =>
+              Effect.uninterruptibleMask((restore) =>
+                restore(effect).pipe(
+                  Effect.forkDetach,
+                  Effect.tap(() => input.admission?.handOff ?? Effect.void),
+                ),
+              ),
           );
 
         // A provider turn is a sign that the session is still alive. Keep

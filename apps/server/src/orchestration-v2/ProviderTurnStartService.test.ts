@@ -48,6 +48,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../config.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
+import * as SkillsAdmission from "../personal/SkillsAdmission.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import {
@@ -1490,6 +1491,64 @@ const enqueueStart = (
     ]);
     return { storedEffect: outbox.get("effect:failed-start").pipe(Effect.map(Option.getOrThrow)) };
   });
+
+effectIt.effect.each(["normal", "compaction", "scheduled", "subagent", "side-chat"] as const)(
+  "waits for skills admission before opening a provider session ($kind)",
+  (kind) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: kind === "compaction" ? "/compact" : "Read the installed skills",
+        failReadsAfterRunning: true,
+        ...(kind === "scheduled"
+          ? { scheduledTaskId: ScheduledTaskId.make("admission-scheduled") }
+          : {}),
+        ...(kind === "side-chat" ? { sideChat: { contextRun: "current" as const } } : {}),
+      });
+      if (kind === "subagent") {
+        const projection = harness.projection();
+        harness.setProjection({
+          ...projection,
+          thread: {
+            ...projection.thread,
+            lineage: { ...projection.thread.lineage, relationshipToParent: "subagent" },
+          },
+        });
+      }
+      const waiting = yield* Deferred.make<void>();
+      const released = yield* Deferred.make<void>();
+      const fiber = yield* harness.start.pipe(
+        Effect.provideService(SkillsAdmission.SkillsAdmission, {
+          admitTurn: ({ onWait }) =>
+            Effect.gen(function* () {
+              yield* onWait;
+              yield* Deferred.succeed(waiting, undefined);
+              yield* Deferred.await(released);
+            }),
+        }),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(waiting);
+      expect(harness.open).not.toHaveBeenCalled();
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      if (kind !== "normal") {
+        yield* Fiber.interrupt(fiber);
+        return;
+      }
+      yield* Deferred.succeed(released, undefined);
+      yield* Fiber.join(fiber);
+      expect(harness.open).toHaveBeenCalledOnce();
+      expect(harness.startRootRun).toHaveBeenCalledOnce();
+      expect(
+        harness.events.flatMap((event) =>
+          event.type === "turn-item.updated" &&
+          event.payload.type === "system_notice" &&
+          event.payload.code === "skills_update_wait"
+            ? [event.payload.status]
+            : [],
+        ),
+      ).toEqual(["running", "completed"]);
+    }),
+);
 
 effectIt.effect(
   "settles an exhausted start effect without claiming an external turn stopped",

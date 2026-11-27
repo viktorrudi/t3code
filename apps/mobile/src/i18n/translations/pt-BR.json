@@ -870,6 +870,8 @@
   "2605da0149cd15f1": "Compactando o contexto",
   "39a82db18ca50c21": "Contexto compactado de {before} → {after} tokens",
   "885ae08a2160a158": "Contexto compactado",
+  "db986d42cd701c4c": "Atualização de habilidades concluída",
+  "d217a938cb47e53f": "Aguardando a atualização de habilidades terminar antes de iniciar.",
   "3ab6b281a0991766": "{count, plural, =1 {Verificou os pull requests vinculados} other {Verificou os pull requests vinculados {count} vezes}}",
   "857e92a89b6b6257": "{count, plural, one {Leu {count} arquivo} other {Leu {count} arquivos}}",
   "466ac7fcdb97bb76": "{count, plural, one {Alterou {count} arquivo} other {Alterou {count} arquivos}}",

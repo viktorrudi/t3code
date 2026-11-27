@@ -870,6 +870,8 @@
   "2605da0149cd15f1": "Compactage du contexte",
   "39a82db18ca50c21": "Contexte compacté de {before} → {after} tokens",
   "885ae08a2160a158": "Contexte compacté",
+  "db986d42cd701c4c": "Mise à jour des compétences terminée",
+  "d217a938cb47e53f": "En attente de la fin de la mise à jour des compétences avant de démarrer.",
   "3ab6b281a0991766": "{count, plural, =1 {Pull requests associées vérifiées} other {Pull requests associées vérifiées {count} fois}}",
   "857e92a89b6b6257": "{count, plural, one {{count} fichier lu} other {{count} fichiers lus}}",
   "466ac7fcdb97bb76": "{count, plural, one {{count} fichier modifié} other {{count} fichiers modifiés}}",

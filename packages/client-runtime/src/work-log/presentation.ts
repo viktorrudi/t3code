@@ -86,6 +86,16 @@ export function contextCompactionLabel(
     : resolve(msg("Context compacted"));
 }
 
+export function systemNoticeLabel(
+  item: Extract<OrchestrationV2TurnItem, { type: "system_notice" }>,
+  resolve: MFunctionType = mFallback,
+): string {
+  if (item.code !== "skills_update_wait") return item.message;
+  return item.status === "completed"
+    ? resolve(msg("Skills update finished"))
+    : resolve(msg("Waiting for a skills update to finish before starting."));
+}
+
 export interface WorkLogPresentationEntry {
   readonly questionAnswer?: import("@t3tools/contracts").UserInputAttachmentAnswerPayload;
   readonly id: string;
