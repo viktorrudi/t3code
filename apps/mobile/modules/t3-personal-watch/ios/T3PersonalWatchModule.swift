@@ -22,7 +22,7 @@ private final class PersonalWatchBridge: NSObject, WCSessionDelegate, @unchecked
         guard WCSession.isSupported() else { throw failure("WatchConnectivity is unavailable on this device.") }
         var context: [String: Any] = ["watchGatewayURL": setup.url.trimmingCharacters(in: CharacterSet(charactersIn: "/")), "watchCredential": setup.token]
         if let pushToken = setup.pushToken { context["watchPushCredential"] = pushToken }
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             lock.lock()
             guard pending == nil else { lock.unlock(); continuation.resume(throwing: failure("Watch setup is already in progress.")); return }
             pending = (context, continuation)
