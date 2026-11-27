@@ -9,6 +9,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { CodexSettings, EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import { MANAGED_TOKEN_REUSE_MS } from "./CodexManagedTokenProtocol.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -147,7 +148,7 @@ it.live.each(
           assert.include(provider, 'base_url="https://api.openai.com/v1"');
           assert.include(provider, 'model_catalog_url="https://api.openai.com/v1/models"');
           assert.notInclude(provider, "env_key");
-          assert.include(provider, "refresh_interval_ms=0");
+          assert.include(provider, `refresh_interval_ms=${MANAGED_TOKEN_REUSE_MS}`);
           // regression: #16132 Codex fetches each token through this helper, so a running
           // session picks up renewals instead of keeping the token it launched with.
           if (source === "managed" && account === "primary") {

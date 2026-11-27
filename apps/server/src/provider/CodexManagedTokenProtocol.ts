@@ -18,6 +18,9 @@ export const RESPONSE_BYTES = 64 * 1024;
 export const SOCKET_IDLE_MS = 5_000;
 // Existing lock retry (40s), OAuth (20s), plus startup/store headroom (20s).
 export const COMMAND_TIMEOUT_MS = 80_000;
+// Codex reuses a helper token this long. Expired token-sharing tokens get a 400, not the 401
+// that would make Codex rerun the helper, so every token handed out must outlive this.
+export const MANAGED_TOKEN_REUSE_MS = 60_000;
 class ProtocolError extends Schema.TaggedError<ProtocolError>()("ManagedTokenProtocolError", {}) {
   override get message(): string {
     return "The managed token frame was invalid or incomplete.";

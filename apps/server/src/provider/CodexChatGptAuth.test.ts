@@ -10,6 +10,7 @@ import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -24,6 +25,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
+import { MANAGED_TOKEN_REUSE_MS } from "./CodexManagedTokenProtocol.ts";
 
 const assertSameCallback = (actual: string | null, expected: string | null) => {
   const left = new URL(actual!);
@@ -285,14 +287,17 @@ const makeHarnessFor = Effect.fnUntraced(function* (
         callbackResponses.push({ body: await response.text(), headers: response.headers });
       });
     });
-  const seedExpired = Effect.gen(function* () {
-    const stored = yield* auth.read;
-    const record = Option.getOrThrow(stored);
-    const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId).pipe(
-      Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
-    );
-    yield* store.set(new TextEncoder().encode(JSON.stringify({ ...record, expiresAt: 0 })));
-  });
+  const seedExpiringIn = (ms: number) =>
+    Effect.gen(function* () {
+      const stored = yield* auth.read;
+      const record = Option.getOrThrow(stored);
+      const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId).pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+      );
+      const expiresAt = (yield* Clock.currentTimeMillis) + ms;
+      yield* store.set(new TextEncoder().encode(JSON.stringify({ ...record, expiresAt })));
+    });
+  const seedExpired = seedExpiringIn(-1);
   return {
     auth,
     jwksRequests: () => jwksRequests,
@@ -366,6 +371,7 @@ const makeHarnessFor = Effect.fnUntraced(function* (
     reconnectProfile: (clientId: string) => signInWithMethod(`chatgpt-profile:${clientId}`),
     phase,
     seedExpired,
+    seedExpiringIn,
     exchanges,
     authorizationRequests,
     callbackResponses,
@@ -744,6 +750,10 @@ it.effect(
         assert.strictEqual(records[0].accessToken, "access-1");
         assert.strictEqual(records[1].refreshToken, "refresh-1");
         assert.isNull(h.exchanges[1]?.get("scope"));
+        // Codex reuses a fetched token for MANAGED_TOKEN_REUSE_MS, so it must outlive that.
+        yield* h.seedExpiringIn(MANAGED_TOKEN_REUSE_MS + 30_000);
+        yield* h.auth.access;
+        assert.strictEqual(h.refreshes(), 2);
         yield* h.auth.controller.logout(Effect.void);
         assert.isTrue(Option.isNone(yield* h.auth.read));
       }),

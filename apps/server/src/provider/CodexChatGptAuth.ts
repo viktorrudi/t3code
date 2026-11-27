@@ -34,6 +34,7 @@ import { withChatGptSessionLock } from "./CodexChatGptSessionLock.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { MANAGED_TOKEN_REUSE_MS } from "./CodexManagedTokenProtocol.ts";
 
 const isSetupError = Schema.is(ProviderSetupError);
 const RESOURCE = "https://api.openai.com/v1";
@@ -834,7 +835,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
         "Token sharing is disabled. Sign in with ChatGPT and enable token sharing.",
       );
     const now = yield* Clock.currentTimeMillis;
-    if (record.expiresAt - now > 60_000) return record;
+    if (record.expiresAt - now > MANAGED_TOKEN_REUSE_MS + 60_000) return record;
     if (record.earliestRefreshAt !== null && record.earliestRefreshAt > now) {
       if (record.expiresAt > now) return record;
       return yield* failure(
