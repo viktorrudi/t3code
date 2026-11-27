@@ -2697,6 +2697,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? notePromptProgress()
               : Effect.void,
           );
+        const settleNativeWorkAfterExit = Effect.fnUntraced(function* () {
+          agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
+          for (const child of nativeChildren.values()) {
+            if (child.status !== "running") continue;
+            child.status = "failed";
+            child.result = null;
+          }
+          for (const child of nativeChildren.values()) {
+            if (
+              child.subagent === undefined ||
+              acpSubagentStatusIsTerminal(child.subagent.task.status)
+            )
+              continue;
+            child.result = null;
+            yield* publishNativeChildStatus(child, "failed");
+          }
+          agentRequests.clear();
+          yield* Ref.set(wakeBuffer, []);
+          yield* Ref.set(continuationRequested, false);
+        });
         const handleRuntimeTerminationAtGeneration = (runtimeGeneration: number) =>
           runRuntimeCallbackAtGeneration(
             runtimeGeneration,
@@ -2727,24 +2747,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 );
                 return;
               }
-              agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
-              for (const child of nativeChildren.values()) {
-                if (child.status !== "running") continue;
-                child.status = "failed";
-                child.result = null;
-              }
-              for (const child of nativeChildren.values()) {
-                if (
-                  child.subagent === undefined ||
-                  acpSubagentStatusIsTerminal(child.subagent.task.status)
-                )
-                  continue;
-                child.result = null;
-                yield* publishNativeChildStatus(child, "failed");
-              }
-              agentRequests.clear();
-              yield* Ref.set(wakeBuffer, []);
-              yield* Ref.set(continuationRequested, false);
+              yield* settleNativeWorkAfterExit();
               yield* cancelPendingRuntimeRequests();
               const context = yield* Ref.get(activeTurn);
               if (context !== null) {
@@ -8760,6 +8763,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* runtimeCallbackPermit.withPermit(
             Effect.gen(function* () {
               const status = context.interrupted ? "interrupted" : "failed";
+              if (followsAgentWorkState) yield* settleNativeWorkAfterExit();
               if (status === "failed") yield* terminalizeOpenForegroundTools(context, status);
               yield* finalizeTurn(context, status, context.interrupted ? undefined : failure);
               retiringPrompt = undefined;
@@ -9148,14 +9152,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       error.success._tag === "AcpRequestError" &&
                       error.success.code === -32800);
                   const failure = Cause.squash(cause);
+                  const agentAnswered =
+                    Result.isSuccess(error) && error.success._tag === "AcpRequestError";
                   const providerFailure =
-                    flavor.promptFailure?.(failure) ??
-                    makeProviderFailure({ cause: failure, class: "provider_error" });
+                    (agentAnswered ? flavor.promptFailure?.(failure) : undefined) ??
+                    makeProviderFailure({
+                      cause: failure,
+                      class: agentAnswered ? "provider_error" : "transport_error",
+                    });
                   if (!interrupted && flavor.restartRuntimeAfterPromptError?.(failure) === true) {
                     yield* Ref.set(runtimeRestartRequired, true);
                   }
-                  const agentAnswered =
-                    Result.isSuccess(error) && error.success._tag === "AcpRequestError";
                   if (!interrupted && !agentAnswered) {
                     yield* quarantinePrompt(context, settle.generation);
                     return providerFailure;

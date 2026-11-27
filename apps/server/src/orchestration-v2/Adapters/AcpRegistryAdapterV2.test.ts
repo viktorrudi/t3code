@@ -217,6 +217,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  let replayProcess: ChildProcessSpawner.ChildProcessHandle | undefined;
   const replayDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-lifecycle-" });
   const scriptPath = yield* path.fromFileUrl(
     new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
@@ -239,7 +240,15 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
       transcript,
       statusPath: path.join(replayDir, `${name}.json`),
       scriptPath,
-      childProcessSpawner,
+      childProcessSpawner: ChildProcessSpawner.make((command) =>
+        childProcessSpawner.spawn(command).pipe(
+          Effect.tap((handle) =>
+            Effect.sync(() => {
+              replayProcess = handle;
+            }),
+          ),
+        ),
+      ),
       fileSystem,
       ...(replayGate === undefined ? {} : { replayGate }),
     });
@@ -254,9 +263,6 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   };
   const instanceId = ProviderInstanceId.make("claude-lifecycle");
   const outgoing = yield* Queue.unbounded<unknown>();
-  let onTermination: NonNullable<
-    AcpSessionRuntime.AcpSessionRuntimeOptions["onTermination"]
-  > = () => Effect.die("Runtime has not started");
   const replayRuntime = yield* makeReplay(entries, "claude-lifecycle");
   const replacementRuntime =
     replacementEntries === undefined
@@ -272,7 +278,6 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     environment: {},
     ...(continuationEnabled ? { continuationRequests } : {}),
     makeRuntime: (runtimeInput: Parameters<typeof replayRuntime>[0]) => {
-      onTermination = runtimeInput.onTermination;
       const replay = started ? replacementRuntime : replayRuntime;
       started = true;
       return replay({
@@ -395,13 +400,11 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     offers,
     offered,
     outgoing,
-    terminate: () =>
-      onTermination(
-        new EffectAcpErrors.AcpTransportError({
-          detail: "Injected fixture process exit",
-          cause: "test",
-        }),
-      ),
+    terminate: Effect.suspend(
+      () =>
+        replayProcess?.kill({ killSignal: "SIGTERM", forceKillAfter: "1 second" }) ??
+        Effect.die("The replay process has not started"),
+    ),
   };
 });
 
@@ -3418,7 +3421,7 @@ describe("AcpRegistryAdapterV2", () => {
       ]);
       yield* session.runtime.startTurn(session.turnInput(1));
       yield* session.throughMarker("child ready");
-      yield* session.terminate();
+      yield* session.terminate;
       const terminal = yield* session.terminal;
       assert.equal(terminal.status, "failed");
       assert.equal(terminal.failure?.class, "transport_error");
@@ -3445,16 +3448,16 @@ describe("AcpRegistryAdapterV2", () => {
       if (completed.type !== "turn.terminal") throw new Error("Missing settled root terminal");
       assert.equal(completed.status, "completed");
       assert.isTrue(yield* settled.runtime.hasPendingBackgroundWork!);
-      yield* settled.terminate();
-      assert.isFalse(
-        yield* settled.runtime.hasPendingBackgroundWork!,
-        "exit releases visible owners held open by nested work",
-      );
+      yield* settled.terminate;
       const exited = yield* settled.until(
         (event) =>
           event.type === "turn_item.updated" &&
           event.turnItem.type === "subagent" &&
           event.turnItem.status === "failed",
+      );
+      assert.isFalse(
+        yield* settled.runtime.hasPendingBackgroundWork!,
+        "exit releases visible owners held open by nested work",
       );
       assert.isTrue(
         exited.some(
