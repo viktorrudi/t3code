@@ -262,6 +262,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
     }),
   );
 
+  it("drops inherited agent identity in any case and keeps other variables", () => {
+    const environment: NodeJS.ProcessEnv = {
+      T3CODE_ENVIRONMENT_ID: "outer-environment",
+      t3code_environment_id: "outer-alias",
+      T3CODE_THREAD_ID: "outer-thread",
+      T3CODE_PORT: "3773",
+      PATH: "/bin",
+    };
+    ServerEnvironment.removeInheritedAgentIdentity(environment);
+    expect(environment).toEqual({ T3CODE_PORT: "3773", PATH: "/bin" });
+  });
+
   it.effect("persists the environment id across service restarts", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
