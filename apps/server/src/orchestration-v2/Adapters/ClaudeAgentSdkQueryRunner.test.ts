@@ -17,7 +17,9 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
@@ -203,7 +205,7 @@ it.effect("forked Claude sessions keep their compaction chain", () =>
   ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
-const realQueryRunner = layerQueryRunner.pipe(
+const queryRunnerWithTestPorts = layerQueryRunner.pipe(
   Layer.provide(PortScanner.layerTest),
   Layer.provide(
     Layer.succeed(ProviderEventLoggers, {
@@ -211,6 +213,8 @@ const realQueryRunner = layerQueryRunner.pipe(
       canonical: undefined,
     }),
   ),
+);
+const realQueryRunner = queryRunnerWithTestPorts.pipe(
   Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
@@ -660,35 +664,123 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
   );
 
   // The default AgentScope is what macOS gets: no systemd scope to catch a job outside the CLI's group.
-  it.effect("stops a job the CLI started in its own process group when the session closes", () =>
+  it.effect("confirms default Claude exit only after signaling the tracked detached job", () =>
     Effect.gen(function* () {
       const cli = fakeClaudeCli(
         [
           'dir=$(dirname "$0")',
-          `perl -e 'setpgrp(0, 0); exec @ARGV' sleep 600 > "$dir/alive" &`,
+          'echo $$ > "$dir/cli.pid"',
+          `perl -e 'setpgrp(0, 0) or die $!; open STDOUT, ">", shift or die $!; exec @ARGV' "$dir/alive" sleep 600 &`,
           'echo $! > "$dir/leftover.pid"',
+          'printf ready > "$dir/ready"',
           "cat > /dev/null",
         ].join("\n"),
       );
       const dir = NodePath.dirname(cli);
-      NodeChildProcess.execFileSync("mkfifo", [NodePath.join(dir, "alive")]);
+      const alivePath = NodePath.join(dir, "alive");
+      const readyPath = NodePath.join(dir, "ready");
+      NodeChildProcess.execFileSync("mkfifo", [alivePath, readyPath]);
+      const alive = NodeFS.createReadStream(alivePath);
+      const ready = NodeFS.createReadStream(readyPath);
+      const leftoverStarted = new Promise<void>((resolve) => alive.once("open", () => resolve()));
+      const leftoverStopped = new Promise<void>((resolve) => alive.once("end", resolve));
+      const cliReady = new Promise<void>((resolve) => ready.once("end", resolve));
+      alive.resume();
+      ready.resume();
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           try {
-            process.kill(Number(NodeFS.readFileSync(NodePath.join(dir, "leftover.pid"), "utf8")));
+            if (!alive.readableEnded) {
+              signalProcessGroup(
+                Number(NodeFS.readFileSync(NodePath.join(dir, "leftover.pid"), "utf8")),
+                "SIGKILL",
+              );
+            }
           } catch {}
+          alive.destroy();
+          ready.destroy();
           NodeFS.rmSync(dir, { recursive: true, force: true });
         }),
       );
-      const alive = NodeFS.createReadStream(NodePath.join(dir, "alive"));
-      const leftoverStarted = new Promise<void>((resolve) => alive.once("open", () => resolve()));
-      const leftoverStopped = new Promise<void>((resolve) => alive.once("close", () => resolve()));
-      alive.resume();
 
-      const session = yield* openFakeCli(cli).pipe(Effect.provide(realQueryRunner));
-      yield* Effect.promise(() => leftoverStarted);
-      yield* session.close;
+      const runningTable = yield* Deferred.make<string>();
+      const exitTableStarted = yield* Deferred.make<void>();
+      const exitTable = yield* Deferred.make<string>();
+      let cliExited = false;
+      let leftoverSignaled = false;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          if (command._tag !== "StandardCommand")
+            return assert.fail("Expected a process-table read");
+          assert.equal(NodePath.basename(command.command), "ps");
+          assert.deepEqual(command.args, ["-A", "-o", "pid=,ppid=,pgid=,lstart="]);
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.encodeText(
+              Stream.fromEffect(
+                cliExited
+                  ? Deferred.succeed(exitTableStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(exitTable)),
+                    )
+                  : Deferred.await(runningTable),
+              ),
+            ),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+      const session = yield* openFakeCli(cli).pipe(
+        Effect.provide(
+          queryRunnerWithTestPorts.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                Layer.succeed(AgentScope, {
+                  ...AgentScope.defaultValue(),
+                  wrap: ({ command, args }) => Effect.succeed({ command, args }),
+                }),
+              ),
+            ),
+            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
+      );
+      yield* Effect.promise(() => Promise.all([leftoverStarted, cliReady]));
+      const cliPid = Number(NodeFS.readFileSync(NodePath.join(dir, "cli.pid"), "utf8"));
+      const leftoverPid = Number(NodeFS.readFileSync(NodePath.join(dir, "leftover.pid"), "utf8"));
+      const kill = process.kill.bind(process);
+      const killSpy = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+        if (pid === -cliPid && signal === "SIGKILL") cliExited = true;
+        const sent = kill(pid, signal);
+        if (pid === -leftoverPid && signal === "SIGKILL") leftoverSignaled = true;
+        return sent;
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => killSpy.mockRestore()));
+      const row = (pid: number, ppid: number) => `${pid} ${ppid} ${pid} Fri Nov 27 10:00:00 2026\n`;
+      yield* Deferred.succeed(runningTable, row(cliPid, process.pid) + row(leftoverPid, cliPid));
+
+      const exit = yield* (
+        session.awaitProcessExit ?? Effect.die("Missing process exit signal")
+      ).pipe(Effect.as(undefined), Effect.forkChild({ startImmediately: true }));
+      const closing = yield* session.close.pipe(Effect.forkChild);
+      yield* Deferred.await(exitTableStarted);
+      assert.isTrue(cliExited);
+      assert.isUndefined(exit.pollUnsafe());
+      assert.isFalse(leftoverSignaled);
+      assert.isTrue(kill(leftoverPid, 0));
+      yield* Deferred.succeed(exitTable, row(leftoverPid, 1));
+      yield* Fiber.join(exit);
+      assert.isTrue(leftoverSignaled);
       yield* Effect.promise(() => leftoverStopped);
+      yield* Fiber.join(closing);
     }),
   );
 
