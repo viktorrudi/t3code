@@ -4,18 +4,11 @@ The native client uses HTTPS and a dedicated Watch gateway. After setup, browsin
 
 ## Build and Install
 
-Use Xcode 26.4 with watchOS platform support. The minimum deployment target is watchOS 10. A physical build needs an Apple Developer signing identity and a paired Watch with Developer Mode enabled.
+The Watch app is part of the personal iPhone fork. Every `T3CODE_IOS_FORK=1` Expo prebuild embeds the `T3Watch` target from `Sources/` through `plugins/withPersonalWatch.cjs`; upstream builds never include it. Build, archive and deliver it with the iPhone app through the [personal iOS fork release workflow](../README.md#private-updates-through-testflight). The release script rejects an archive without the Watch app, or with a mismatched bundle ID, companion ID, version or build. Installing the TestFlight build on the iPhone offers the Watch app in the iPhone's Watch app.
 
-A standalone project can be generated without installing JavaScript dependencies. From the repository root:
+Use Xcode 26.4 with watchOS platform support. The minimum deployment target is watchOS 10. The bundle ID is `<fork bundle ID>.watchkitapp` (`com.viktorrudi.t3code.watchkitapp`). Register that App ID with Push Notifications in the same team as the phone app, and keep it stable across updates.
 
-```sh
-node apps/mobile/watch/project.cjs .t3/watch-native
-open .t3/watch-native/T3Watch.xcodeproj
-```
-
-In Xcode, choose the `T3Watch` scheme, select your Apple team in Signing & Capabilities, then select your Watch and Run. The bundle ID is `com.viktorrudi.t3code.watchkitapp`. Do not change it between updates. Register its Push Notifications capability with the same team that owns the personal phone app.
-
-For the companion build, `T3CODE_IOS_FORK=1 T3CODE_IOS_WATCH=1` Expo prebuild embeds the Watch target in the personal iPhone app. The existing private TestFlight release process builds both. Ordinary phone builds omit the Watch target until this opt-in is set. The native fingerprint includes Watch sources.
+For local development, run `vp run ios:fork:release` with `T3CODE_IOS_FORK_TEAM_ID` set, or run Expo prebuild with `T3CODE_IOS_FORK=1` and open `ios/T3CodePersonal.xcworkspace`. Choose the `T3Watch` scheme with a Watch simulator or a paired Watch that has Developer Mode enabled. The native fingerprint includes the Watch sources.
 
 ## Prepare the Gateway
 

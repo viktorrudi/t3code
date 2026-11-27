@@ -8,7 +8,7 @@ module.exports = function withPersonalWatch(config) {
       bundleId: config.ios.bundleIdentifier,
       version: config.version,
       buildNumber: config.ios.buildNumber || "1",
-      teamId: config.ios.appleTeamId || "",
+      teamId: config.ios.appleTeamId,
     });
     return cfg;
   });

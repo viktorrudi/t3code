@@ -34,13 +34,12 @@ verify_archive() {
   done
   [[ $has_widgets == 1 && $has_sharing == 1 ]] || fail "Archive is missing an iOS extension."
   local watch="$app/Watch/T3Watch.app"
-  if [[ ${T3CODE_IOS_WATCH:-0} == 1 || -d "$watch" ]]; then
   [[ -d "$watch" ]] || fail "Archive is missing the personal Watch app."
   [[ $(plist_value "$watch/Info.plist" CFBundleIdentifier) == "$bundle_id.watchkitapp" ]] || fail "Unexpected Watch bundle ID."
+  [[ $(plist_value "$watch/Info.plist" WKCompanionAppBundleIdentifier) == "$bundle_id" ]] || fail "Watch app is not paired with this iPhone app."
   [[ $(plist_value "$watch/Info.plist" CFBundleShortVersionString) == "$version" ]] || fail "Watch version does not match the app."
   [[ $(plist_value "$watch/Info.plist" CFBundleVersion) == $(plist_value "$info" CFBundleVersion) ]] || fail "Watch build does not match the app."
   codesign --verify --strict "$watch"
-  fi
   codesign --verify --deep --strict "$app"
   local signature
   signature=$(codesign -dv --verbose=4 "$app" 2>&1)

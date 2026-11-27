@@ -108,6 +108,7 @@ it.each([
     "expo-widgets",
     expect.objectContaining({ enablePushNotifications: false }),
   ]);
+  expect(config.plugins).toContain("./plugins/withPersonalWatch.cjs");
   expect(config.updates).toEqual({ enabled: false });
   expect(config.owner).toBeUndefined();
   expect(config.extra?.eas.projectId).toBeUndefined();
@@ -131,4 +132,8 @@ it("keeps direct-device builds on development APNs without enabling the producti
     "expo-notifications",
     expect.objectContaining({ mode: "development" }),
   ]);
+});
+
+it("keeps the personal Watch app out of upstream builds", async () => {
+  expect((await loadConfig("production")).plugins).not.toContain("./plugins/withPersonalWatch.cjs");
 });

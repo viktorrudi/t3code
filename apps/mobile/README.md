@@ -177,7 +177,8 @@ a real locked-phone test.
 Use the same Apple team and bundle ID for every build. In App Store Connect,
 create the iOS app record for that ID, then create an internal TestFlight group
 with automatic distribution and add your Apple account. Register the matching
-App Group for the app and both extensions. Sign in to that team in Xcode.
+App Group for the app and both extensions, and the `.watchkitapp` App ID with
+Push Notifications for the [embedded Apple Watch app](watch/README.md). Sign in to that team in Xcode.
 
 From a worktree of the reviewed fork, run these commands from `apps/mobile`.
 Replace the team ID and upstream tag with those used by the release.
