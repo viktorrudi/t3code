@@ -355,6 +355,7 @@ describe("CursorAdapterV2", () => {
     },
     {
       reason: "the SDK rate limit that broke the run",
+      verifyEnded: Effect.succeed(true),
       wait: Effect.fail(
         new CursorAgentSdk.CursorAgentSdkRunnerError({
           method: "run.wait",
@@ -476,8 +477,9 @@ describe("CursorAdapterV2", () => {
       // The checkpoint holds the context fill; billed input counts every step.
       contextFill: { usedTokens: 8_304, maxTokens: 200_000 },
     },
-  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers, usage, contextFill }) =>
+  ])("ends the turn with $reason", (fixture) =>
     Effect.gen(function* () {
+      const { updates = [], wait, failure, answers, usage, contextFill, verifyEnded } = fixture;
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "cursor-v2-failure-",
@@ -511,6 +513,7 @@ describe("CursorAdapterV2", () => {
                     agentId: "native-cursor-failure",
                     runId: "native-cursor-run",
                     wait,
+                    ...(verifyEnded === undefined ? {} : { verifyEnded }),
                     cancel: Effect.void,
                   };
                 }),

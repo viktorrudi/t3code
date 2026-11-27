@@ -9350,6 +9350,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }
               }
             }
+            yield* ProviderAdapter.claimTurnDelivery(turnInput);
             yield* Ref.set(activeTurn, context);
             yield* Ref.set(stoppedRunQuarantine, false);
             const runningTurn = providerTurnPayload(context, "running", null);
@@ -9904,6 +9905,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ),
               ),
           ),
+          claimsTurnDelivery: true,
           startTurn,
           ...(compactsContext
             ? {

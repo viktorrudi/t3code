@@ -36,7 +36,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
@@ -363,6 +363,7 @@ export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAd
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
     runId: RunId,
+    outcome: Schema.optional(Schema.Literals(["not_delivered", "runtime_ended"])),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -370,6 +371,8 @@ export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAd
     return `Failed to start run ${this.runId} on ${this.driver} provider thread ${this.providerThreadId}.`;
   }
 }
+
+export const isProviderAdapterTurnStartError = Schema.is(ProviderAdapterTurnStartError);
 
 export class ProviderAdapterSteerRunUnsupportedError extends Schema.TaggedError<ProviderAdapterSteerRunUnsupportedError>()(
   "ProviderAdapterSteerRunUnsupportedError",
@@ -458,6 +461,8 @@ export class ProviderAdapterEventStreamError extends Schema.TaggedError<Provider
     detachedThreadId: Schema.optional(ThreadId),
     /** Set when T3 raised this itself; unset when the adapter reported its runtime failing. */
     raisedByT3: Schema.optional(Schema.Boolean),
+    /** Set after the owned native process exits. A broken transport alone is insufficient. */
+    runtimeEnded: Schema.optional(Schema.Literal(true)),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -561,7 +566,23 @@ export interface ProviderAdapterV2TurnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  /** Claim immediately before submitting or adopting native work. False means the start was abandoned. */
+  readonly claimDelivery?: Effect.Effect<boolean>;
 }
+
+export const claimTurnDelivery = Effect.fn("ProviderAdapter.claimTurnDelivery")(function* (
+  input: ProviderAdapterV2TurnInput,
+) {
+  if (input.claimDelivery === undefined || (yield* input.claimDelivery)) return;
+  return yield* new ProviderAdapterTurnStartError({
+    driver: input.providerThread.driver,
+    threadId: input.threadId,
+    providerThreadId: input.providerThread.id,
+    runId: input.runId,
+    outcome: "not_delivered",
+    cause: "The caller abandoned the turn before delivery.",
+  });
+});
 
 export type ProviderAdapterV2ResumeTurnInput = Omit<
   ProviderAdapterV2TurnInput,
@@ -704,6 +725,10 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly driver: ProviderDriverKind;
   readonly providerSessionId: ProviderSessionId;
   readonly providerSession: OrchestrationV2ProviderSession;
+  /** Adapters without this contract are conservatively claimed at invocation. */
+  readonly claimsTurnDelivery?: true;
+  /** Completes after the owned native process exits. Disconnection alone is insufficient. */
+  readonly awaitVerifiedRuntimeExit?: Effect.Effect<void>;
   /** False keeps conversations alive when the provider cannot restore them after a restart. */
   readonly canResumeAfterRestart?: boolean;
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;

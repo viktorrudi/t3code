@@ -2275,7 +2275,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(result._tag, "Failure", "a different run must not adopt the original turn");
         if (result._tag !== "Failure") return;
         const failure = result.failure;
-        assert.equal(failure._tag, "ProviderAdapterTurnStartError");
+        assert(ProviderAdapter.isProviderAdapterTurnStartError(failure));
+        assert.equal(failure.outcome, "not_delivered");
         assert.instanceOf(failure.cause, ProviderAdapter.ProviderAdapterProtocolError);
         yield* harness.firstTerminal;
         assert.deepEqual(
@@ -2298,6 +2299,86 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             [3, "completed"],
           ],
         );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each(["malformed response", "RPC rejection", "process exit"] as const)(
+    "classifies a turn start with a %s",
+    (response) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "start-outcome-thread";
+        const nativeTurnId = "start-outcome-turn";
+        const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+        const entries: CodexReplay.CodexAppServerReplayEntry[] = preamble.slice(0, 6);
+        switch (response) {
+          case "malformed response": {
+            const started = preamble[7]!;
+            assert.equal(started.type, "emit_inbound");
+            if (started.type !== "emit_inbound") return;
+            entries.push(
+              { type: "emit_inbound", frame: { id: 3, result: { turn: { id: nativeTurnId } } } },
+              { ...started, afterMs: 1 },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            );
+            break;
+          }
+          case "RPC rejection":
+            entries.push({
+              type: "emit_inbound",
+              frame: { id: 3, error: { code: -32602, message: "Turn rejected" } },
+            });
+            break;
+          case "process exit":
+            entries.push({ type: "runtime_exit", status: "success" });
+            break;
+        }
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({ scenario: response, entries }),
+        );
+        const first = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("start-outcome-attempt"),
+          text: "work",
+        });
+        const result = yield* harness.runtime.startTurn(first).pipe(Effect.result);
+        assert.equal(result._tag, "Failure");
+        if (result._tag !== "Failure") return;
+        assert(ProviderAdapter.isProviderAdapterTurnStartError(result.failure));
+        assert.equal(
+          result.failure.outcome,
+          response === "RPC rejection"
+            ? "not_delivered"
+            : response === "process exit"
+              ? "runtime_ended"
+              : undefined,
+        );
+        if (response === "malformed response") {
+          assert.lengthOf(harness.terminalEvents(), 0);
+          yield* TestClock.adjust("1 millis");
+          yield* harness.firstTerminal;
+          assert.include(harness.terminalEvents()[0], { runOrdinal: 1, status: "completed" });
+        }
       }).pipe(
         Effect.scoped,
         Effect.provide(

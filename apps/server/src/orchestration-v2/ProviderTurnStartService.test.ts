@@ -1928,6 +1928,7 @@ effectIt.effect("preserves a replacement committed before exhausted start settle
                     threadId: run.threadId,
                     providerThreadId: run.providerThreadId!,
                     runId: run.id,
+                    outcome: "not_delivered",
                     cause: "provider start failed after publishing its turn",
                   });
                 }),

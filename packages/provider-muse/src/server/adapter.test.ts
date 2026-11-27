@@ -174,6 +174,7 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
         closed.resolve();
         exited.resolve({ code: 1, signal: null });
       }),
+    disconnectTransport: () => Effect.sync(() => closed.resolve()),
     setHistory: (items: MuseItem[]) => {
       history = items;
     },
@@ -978,6 +979,43 @@ describe("MuseAdapterV2", () => {
       }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("holds the active turn after disconnect until the host exits", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      yield* startConversation(harness, fake);
+      const exit = pendingPromise<void>();
+      fake.holdClose(exit.promise);
+      yield* Effect.gen(function* () {
+        yield* fake.disconnectTransport();
+        yield* Effect.promise(() => fake.closing);
+        assert.isFalse(harness.allEvents.some((event) => event.type === "turn.terminal"));
+        exit.resolve();
+        assert.equal((yield* harness.takeEvent("turn.terminal")).status, "failed");
+      }).pipe(Effect.ensuring(Effect.sync(() => exit.resolve())));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("attributes a late terminal after an undecodable start acknowledgement", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      fake.queueResponse("turn/start", {});
+      const failure = yield* Effect.flip(
+        harness.runtime.startTurn(yield* turnInput(harness.providerThread)),
+      );
+      assert(ProviderAdapter.isProviderAdapterTurnStartError(failure));
+      assert.isUndefined(failure.outcome);
+      assert.isFalse(harness.allEvents.some((event) => event.type === "turn.terminal"));
+      const request = yield* fake.takeCall("turn/start");
+      assert.isString(request.commandId);
+      yield* fake.emit("turn/completed", { turnId: request.commandId, terminal: "completed" });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.equal(terminal.status, "completed");
+      assert.equal(terminal.runOrdinal, 1);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("settles an active turn once when both the connection and host exit unexpectedly", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
@@ -1663,7 +1701,10 @@ describe("MuseAdapterV2", () => {
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
-      fake.queueResponse("session/compact", new Error("command rejected: run_active"));
+      fake.queueResponse(
+        "session/compact",
+        new MspError({ code: -32000, message: "command rejected: run_active" }),
+      );
       yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread));
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.status, "failed");
@@ -1815,7 +1856,10 @@ describe("MuseAdapterV2", () => {
       yield* harness.takeEvent("turn.terminal");
       yield* fake.emit("turn/started", { turnId: "background-wake" });
       yield* Deferred.await(offered);
-      fake.queueResponse("session/compact", new Error("command rejected: run_active"));
+      fake.queueResponse(
+        "session/compact",
+        new MspError({ code: -32000, message: "command rejected: run_active" }),
+      );
       yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread, 2));
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.status, "failed");

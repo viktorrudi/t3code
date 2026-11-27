@@ -2463,6 +2463,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             Effect.forkIn(scope),
           );
         });
+        const preserveUncertainAdmission = Effect.fnUntraced(function* (
+          state: OpenCodeThreadState,
+          turn: ActiveOpenCodeTurn,
+        ) {
+          if (!turnIsLive(state, turn)) return;
+          turn.admissionUncertain = true;
+          if (advanceOpenCodePromptAdmission(turn, "accepted") === "reconcile-idle") {
+            yield* reconcilePromptAdmission(state, turn);
+          }
+        });
 
         const createChildTurn = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
@@ -3577,9 +3587,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               turn.finalized ||
               turn.admissionGeneration !== generation
                 ? Effect.void
-                : finalizeTurn(state, turn, "failed", {
-                    failure: makeProviderFailure({ cause, class: "provider_error" }),
-                  }),
+                : isOpenCodePromptRejected(cause)
+                  ? finalizeTurn(state, turn, "failed", {
+                      failure: makeProviderFailure({ cause, class: "provider_error" }),
+                    })
+                  : preserveUncertainAdmission(state, turn),
             ),
             Effect.ensuring(
               Effect.sync(() => {
@@ -3600,9 +3612,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   cause,
                 });
                 abortController.abort();
-                return finalizeTurn(state, turn, "failed", {
-                  failure: makeProviderFailure({ cause: error, class: "provider_error" }),
-                }).pipe(Effect.andThen(Effect.fail(error)));
+                return preserveUncertainAdmission(state, turn).pipe(
+                  Effect.andThen(
+                    Effect.suspend(() =>
+                      turnIsLive(state, turn)
+                        ? abortRootSession(state).pipe(Effect.ignore({ log: true }))
+                        : Effect.void,
+                    ),
+                  ),
+                  Effect.andThen(Effect.fail(error)),
+                );
               },
             }),
           );
@@ -3613,6 +3632,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           driver: OPENCODE_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: sessionEntity,
+          claimsTurnDelivery: true,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           hasPendingBackgroundWork: Effect.sync(
             () =>
@@ -3837,6 +3857,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                         });
                       }
                       const wake = state.wake;
+                      yield* ProviderAdapter.claimTurnDelivery(turnInput);
                       if (!continuation) turn.priorWakeSettled = wake?.settled ?? null;
                       state.wake = null;
                       state.appThread = turnInput.appThread;
@@ -3927,9 +3948,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                     finalizeTurn(state, turn, turn.interrupted ? "interrupted" : "completed"),
                   ),
                   Effect.tapError((cause) =>
-                    finalizeTurn(state, turn, turn.interrupted ? "interrupted" : "failed", {
-                      failure: makeProviderFailure({ cause, class: "provider_error" }),
-                    }),
+                    isOpenCodePromptRejected(cause)
+                      ? finalizeTurn(state, turn, turn.interrupted ? "interrupted" : "failed", {
+                          failure: makeProviderFailure({ cause, class: "provider_error" }),
+                        })
+                      : preserveUncertainAdmission(state, turn),
                   ),
                   Effect.ensuring(Deferred.succeed(admissionSettled, undefined)),
                 );
@@ -3951,9 +3974,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 Effect.tapError((cause) =>
                   admissionAbortController!.signal.aborted
                     ? Effect.void
-                    : finalizeTurn(state, turn, "failed", {
-                        failure: makeProviderFailure({ cause, class: "provider_error" }),
-                      }),
+                    : isOpenCodePromptRejected(cause)
+                      ? finalizeTurn(state, turn, "failed", {
+                          failure: makeProviderFailure({ cause, class: "provider_error" }),
+                        })
+                      : preserveUncertainAdmission(state, turn),
                 ),
                 Effect.catch((cause) =>
                   admissionAbortController!.signal.aborted ? Effect.void : Effect.fail(cause),
@@ -3995,6 +4020,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                         threadId: turnInput.threadId,
                         providerThreadId: turnInput.providerThread.id,
                         runId: turnInput.runId,
+                        ...(isOpenCodePromptRejected(cause)
+                          ? { outcome: "not_delivered" as const }
+                          : {}),
                         cause,
                       }),
                   ),

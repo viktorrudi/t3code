@@ -2075,6 +2075,7 @@ export const layer: Layer.Layer<
               threadId: turnInput.threadId,
               providerThreadId: turnInput.providerThread.id,
               runId: turnInput.runId,
+              outcome: "not_delivered",
               cause: "The provider start no longer owns the run.",
             });
           }

@@ -105,6 +105,7 @@ export interface CursorAgentSdkRun {
   readonly runId: string;
   readonly agentId: string;
   readonly wait: Effect.Effect<RunResult, CursorAgentSdkRunnerError>;
+  readonly verifyEnded?: Effect.Effect<boolean>;
   readonly cancel: Effect.Effect<void, CursorAgentSdkRunnerError>;
   /** Absent on test doubles that never steer. The live runner always sets it. */
   readonly steer?: (text: string) => Effect.Effect<SteerAckOutcome, CursorAgentSdkRunnerError>;
@@ -694,16 +695,21 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
           for (const update of pendingUpdates) {
             yield* Effect.tryPromise({
               try: () => dispatchUpdate(update),
-              catch: (cause) => runnerError(cause, "run.onDelta"),
-            });
+              catch: (cause) => {
+                callbackFailure ??= { cause };
+                return runnerError(cause, "run.onDelta");
+              },
+            }).pipe(Effect.ignore);
           }
 
+          let nativeEnded = false;
           return {
             runId: run.id,
             agentId: run.agentId,
             wait: Effect.tryPromise({
               try: async () => {
                 const result = await run.wait();
+                nativeEnded = true;
                 await callbackChain;
                 if (callbackFailure !== undefined) {
                   throw callbackFailure.cause;
@@ -724,6 +730,20 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                 }),
               ),
             ),
+            verifyEnded: Effect.tryPromise({
+              try: async () => {
+                if (nativeEnded) return true;
+                const { store } = await storeView();
+                const entry = await store.getRun(agent.agentId, run.id);
+                return (
+                  entry?.status === "FINISHED" ||
+                  entry?.status === "ERROR" ||
+                  entry?.status === "CANCELLED" ||
+                  entry?.status === "EXPIRED"
+                );
+              },
+              catch: (cause) => runnerError(cause, "agent.run.get"),
+            }).pipe(Effect.orElseSucceed(() => false)),
             steer: Effect.fn("CursorAgentSdkRun.steer")((text: string) =>
               log({
                 direction: "outgoing",

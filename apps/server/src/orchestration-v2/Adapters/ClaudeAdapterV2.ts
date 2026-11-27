@@ -761,6 +761,7 @@ export interface ClaudeAgentSdkQuerySession {
   >;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  readonly awaitProcessExit?: Effect.Effect<void>;
 }
 
 type ClaudeQueryStreamExit = Exit.Exit<void, ClaudeAgentSdkQueryRunnerError>;
@@ -1980,10 +1981,31 @@ export const layerQueryRunner: Layer.Layer<
             }),
           ),
         ),
+        awaitProcessExit: Effect.suspend(() => {
+          const exit = processExit;
+          return exit === undefined ? Effect.never : Effect.promise(() => exit);
+        }),
         // A job started since the last poll is recorded before the CLI is told to exit.
         close: Effect.suspend(() => (processExited ? Effect.void : refreshDescendants)).pipe(
           Effect.andThen(Queue.shutdown(promptQueue)),
           Effect.andThen(closeClaudeQuery(queryRuntime)),
+          Effect.andThen(
+            Effect.tryPromise({
+              try: async () => {
+                if (spawnedProcess !== undefined && !processExited) spawnedProcess.kill("SIGKILL");
+                await processExit;
+              },
+              catch: (cause) => queryRunnerError(cause, "close"),
+            }).pipe(
+              Effect.timeoutOrElse({
+                duration: "10 seconds",
+                orElse: () =>
+                  Effect.fail(
+                    queryRunnerError(new Error("Claude process exit not confirmed"), "close"),
+                  ),
+              }),
+            ),
+          ),
           Effect.tap(() =>
             logProtocolEvent({
               direction: "outgoing",
@@ -13533,6 +13555,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               executedModel: undefined,
             };
             const attachTurn = Effect.gen(function* () {
+              yield* ProviderAdapter.claimTurnDelivery(turnInput);
               // Set before claiming: a query that exits after the claim finalizes this turn; one that exits before it fails the start.
               yield* Ref.set(activeTurn, context);
               const attached = yield* Ref.modify(queryContext, (current) => {
@@ -13631,9 +13654,34 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       ),
                     ),
                   );
+            const submitUserMessage = offerUserMessage.pipe(
+              Effect.catchCause((cause) =>
+                Effect.gen(function* () {
+                  if (offerCommitted || Cause.hasInterruptsOnly(cause))
+                    return yield* Effect.failCause(cause);
+                  const error = Cause.squash(cause);
+                  if ((yield* Ref.get(activeTurn)) === context) {
+                    yield* finalizeActiveTurn({
+                      context,
+                      status: "failed",
+                      completedAt: yield* DateTime.now,
+                      failure: makeProviderFailure({ cause: error, class: "provider_error" }),
+                    });
+                  }
+                  return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
+                    driver: CLAUDE_PROVIDER,
+                    threadId: turnInput.threadId,
+                    providerThreadId: turnInput.providerThread.id,
+                    runId: turnInput.runId,
+                    outcome: "not_delivered",
+                    cause: error,
+                  });
+                }),
+              ),
+            );
             if (userMessage !== null && !turnInput.resume) {
               yield* attachTurn;
-              yield* offerUserMessage;
+              yield* submitUserMessage;
               return;
             }
             // Transcript reads suspend replay; hold SDK frames until the buffer is applied to preserve order.
@@ -13764,7 +13812,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (userMessage !== null) {
               yield* sdkMessageLock.withPermits(1)(
                 Effect.gen(function* () {
-                  if ((yield* Ref.get(activeTurn)) === context) yield* offerUserMessage;
+                  if ((yield* Ref.get(activeTurn)) === context) yield* submitUserMessage;
                 }),
               );
             }
@@ -13772,15 +13820,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           (effect, turnInput) =>
             effect.pipe(
               Effect.scoped,
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: CLAUDE_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
+              Effect.mapError((cause) =>
+                ProviderAdapter.isProviderAdapterTurnStartError(cause)
+                  ? cause
+                  : new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: CLAUDE_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      cause,
+                    }),
               ),
             ),
         );
@@ -14203,6 +14252,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           driver: CLAUDE_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
+          claimsTurnDelivery: true,
+          awaitVerifiedRuntimeExit: Ref.get(queryContext).pipe(
+            Effect.flatMap((context) => context?.query.awaitProcessExit ?? Effect.never),
+          ),
           getModelContextWindow: (selection) => claudeContextWindow(selection) ?? undefined,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           backgroundTasksEndWithProcess: true,

@@ -3376,6 +3376,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 }),
             ),
           ),
+        claimsTurnDelivery: true,
+        awaitVerifiedRuntimeExit: connection.exited.pipe(
+          Effect.asVoid,
+          Effect.catch(() => Effect.never),
+        ),
         compactThread: (turnInput) =>
           runtime.startTurn({
             ...turnInput,
@@ -3499,6 +3504,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 if (wake !== null && wake.state.providerThread.appThreadId !== turnInput.threadId) {
                   return yield* protocolError("Pi native wake belongs to a different app thread");
                 }
+                yield* ProviderAdapter.claimTurnDelivery(turnInput);
                 pendingWake = null;
                 state.providerThread = {
                   ...turnInput.providerThread,
