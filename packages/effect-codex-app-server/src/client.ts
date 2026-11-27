@@ -41,6 +41,7 @@ export class CodexAppServerClient extends Context.Service<
   {
     readonly raw: CodexAppServerClientRaw;
     readonly awaitTermination: Effect.Effect<never, CodexError.CodexAppServerError>;
+    readonly awaitProcessExit?: Effect.Effect<void>;
     readonly request: <M extends CodexRpc.ClientRequestMethod>(
       method: M,
       payload: CodexRpc.ClientRequestParamsByMethod[M],
@@ -313,9 +314,18 @@ const makeChildProcessClient = Effect.fn(
   "effect-codex-app-server/CodexAppServerClient.makeChildProcessClient",
 )(function* (handle: ChildProcessSpawner.ChildProcessHandle, options: CodexAppServerClientOptions) {
   const stderrTail = yield* makeStderrTail(handle.stderr);
-  return yield* make(
+  const terminationError = makeTerminationError(handle, stderrTail.read);
+  const client = yield* make(
     makeChildStdio(handle, stderrTail.awaitDrained),
     options,
-    makeTerminationError(handle, stderrTail.read),
+    terminationError,
   );
+  return {
+    ...client,
+    awaitProcessExit: terminationError.pipe(
+      Effect.flatMap((error) =>
+        error._tag === "CodexAppServerProcessExitedError" ? Effect.void : Effect.never,
+      ),
+    ),
+  };
 });

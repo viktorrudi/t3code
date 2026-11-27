@@ -1214,33 +1214,37 @@ export const layer: Layer.Layer<
           );
         });
         const runtimeExitSignal = input.session.awaitVerifiedRuntimeExit;
+        const verifiedRuntimeExited = yield* Deferred.make<void>();
         const awaitRuntimeExit =
-          runtimeExitSignal === undefined
-            ? undefined
-            : Deferred.await(deliveryClaimed).pipe(Effect.andThen(runtimeExitSignal));
+          runtimeExitSignal === undefined ? undefined : Deferred.await(verifiedRuntimeExited);
         const nativeWorkEnded = yield* Deferred.make<void>();
         const launchFinished = yield* Deferred.make<void>();
+        const admissionFinished = yield* Deferred.make<void>();
         const monitoringStart = yield* Ref.make(false);
+        const warnWhileWaiting = Effect.fn("RunExecutionService.warnWhileWaitingForProvider")(
+          function* (message: string) {
+            yield* Effect.sleep("60 seconds");
+            while (true) {
+              yield* Effect.logWarning(message, {
+                runId: input.run.id,
+                attemptId: input.attemptId,
+                driver: input.session.driver,
+                providerSessionId: input.providerSessionId,
+                recovery:
+                  input.session.backgroundTasksEndWithProcess === true &&
+                  runtimeExitSignal !== undefined
+                    ? "force_stop"
+                    : "restart_t3",
+              });
+              yield* Effect.sleep("10 minutes");
+            }
+          },
+        );
         const monitorStart = Effect.fn("RunExecutionService.monitorProviderStart")(function* () {
           if (yield* Ref.getAndSet(monitoringStart, true)) return;
           yield* Effect.raceFirst(
             Deferred.await(launchFinished),
-            Effect.gen(function* () {
-              yield* Effect.sleep("60 seconds");
-              while (true) {
-                yield* Effect.logWarning(
-                  "Provider start is still waiting for verified termination",
-                  {
-                    runId: input.run.id,
-                    attemptId: input.attemptId,
-                    driver: input.session.driver,
-                    providerSessionId: input.providerSessionId,
-                    recovery: runtimeExitSignal === undefined ? "restart_t3" : "force_stop",
-                  },
-                );
-                yield* Effect.sleep("10 minutes");
-              }
-            }),
+            warnWhileWaiting("Provider start is still waiting for verified termination"),
           ).pipe(Effect.forkIn(scope));
         });
         const uncertainStart = yield* Ref.make(false);
@@ -1681,6 +1685,7 @@ export const layer: Layer.Layer<
           }
           const terminal = yield* Ref.get(terminalEvent);
           if (
+            input.admission === undefined &&
             terminal !== null &&
             terminal.status !== "completed" &&
             !childTurnsContinue(terminal)
@@ -1718,6 +1723,7 @@ export const layer: Layer.Layer<
           }
           const terminal = yield* Ref.get(terminalEvent);
           if (
+            input.admission === undefined &&
             terminal !== null &&
             terminal.status !== "completed" &&
             !childTurnsContinue(terminal)
@@ -2046,10 +2052,29 @@ export const layer: Layer.Layer<
         let remaining = 2;
         const releaseAdmission = Effect.suspend(() => {
           remaining -= 1;
-          return remaining === 0 && input.admission !== undefined
-            ? Scope.close(input.admission.scope, Exit.void)
-            : Effect.void;
+          if (remaining !== 0) return Effect.void;
+          return Deferred.succeed(admissionFinished, undefined).pipe(
+            Effect.andThen(
+              input.admission === undefined
+                ? Effect.void
+                : Scope.close(input.admission.scope, Exit.void),
+            ),
+          );
         });
+        let releaseIngestionAfterExit = false;
+        const releaseIngestion = Effect.suspend(() =>
+          releaseIngestionAfterExit
+            ? Effect.raceFirst(
+                Deferred.await(verifiedRuntimeExited),
+                warnWhileWaiting("Provider events ended before native work was verified stopped"),
+              ).pipe(
+                Effect.andThen(releaseAdmission),
+                Effect.interruptible,
+                Effect.forkIn(scope),
+                Effect.asVoid,
+              )
+            : releaseAdmission,
+        );
         const providerEvents = eventSink
           .consumeProviderEvents(
             eventSubscription.events.pipe(
@@ -2107,10 +2132,18 @@ export const layer: Layer.Layer<
                     isRunExecutionIngestError(squashed) &&
                     isProviderEventStreamError(squashed.cause) &&
                     squashed.cause.raisedByT3 !== true;
-                  if (
-                    isProviderEventStreamError(streamError) &&
-                    streamError.runtimeEnded === true
-                  ) {
+                  const verifiedExit =
+                    isProviderEventStreamError(streamError) && streamError.runtimeEnded === true;
+                  if (input.admission !== undefined && !(yield* shouldStopProviderEventIngestion)) {
+                    // An unusable subscription must prevent an open launch from delivering.
+                    const delivered = yield* Ref.modify(delivery, (state) => [
+                      state === "claimed",
+                      state === "open" ? "abandoned" : state,
+                    ]);
+                    releaseIngestionAfterExit = delivered && !verifiedExit;
+                  }
+                  if (verifiedExit) {
+                    yield* Deferred.succeed(verifiedRuntimeExited, undefined);
                     yield* Deferred.succeed(nativeWorkEnded, undefined);
                   }
                   const interruptionReason = isProviderEventStreamError(streamError)
@@ -2304,7 +2337,7 @@ export const layer: Layer.Layer<
             ),
             Effect.ensuring(endPreviewActivity),
             Effect.ensuring(eventSubscription.close),
-            Effect.ensuring(releaseAdmission),
+            Effect.ensuring(releaseIngestion),
           );
 
         const launch = Effect.fn("RunExecutionService.launchProviderTurn")(
@@ -2498,6 +2531,17 @@ export const layer: Layer.Layer<
         );
         yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
+            if (runtimeExitSignal !== undefined) {
+              yield* restore(
+                Effect.raceFirst(
+                  Deferred.await(admissionFinished),
+                  Deferred.await(deliveryClaimed).pipe(
+                    Effect.andThen(runtimeExitSignal),
+                    Effect.andThen(Deferred.succeed(verifiedRuntimeExited, undefined)),
+                  ),
+                ),
+              ).pipe(Effect.forkIn(scope));
+            }
             const providerEventFiber = yield* restore(providerEvents).pipe(Effect.forkDetach);
             yield* input.admission?.handOff ?? Effect.void;
             // A cancelled caller cannot tell whether the provider accepted the request.

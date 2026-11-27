@@ -21,10 +21,12 @@ import { assert, beforeAll, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
   EnvironmentId,
+  MessageId,
   type ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  RunId,
   ThreadId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
@@ -620,7 +622,10 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   readonly runtimeMode?: "full-access" | "approval-required";
   readonly wrapPrompt?: (
     prompt: AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"],
+    runtimeOrdinal: number,
   ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"];
+  readonly awaitExitGate?: Effect.Effect<void>;
+  readonly trackBackgroundTool?: boolean;
   readonly cancelled?: Deferred.Deferred<void>;
   readonly followAgentWorkState?: boolean;
   readonly sessionScope?: Scope.Scope;
@@ -634,16 +639,30 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
       driver: ACP_TEST_DRIVER,
       capabilities: AcpProviderCapabilitiesV2,
       promptInactivityTimeout: "15 minutes",
+      ...(input.awaitExitGate === undefined ? {} : { steersWithPrompt: () => true }),
       ...(input.followAgentWorkState === true ? { followAgentWorkState: true } : {}),
+      ...(input.trackBackgroundTool === true
+        ? {
+            extractBackgroundTaskId: (tool) =>
+              tool.toolCallId === "tracked-tool-call" ? "background-fixture" : undefined,
+          }
+        : {}),
       makeRuntime: makeMockRuntime({
         childProcessSpawner,
         mockAgentPath: yield* bundledMockAgentPath,
         environment: input.environment,
-        wrapRuntime: (runtime) => {
+        wrapRuntime: (runtime, runtimeOrdinal) => {
           natives.push(runtime);
           return {
             ...runtime,
-            prompt: input.wrapPrompt?.(runtime.prompt) ?? runtime.prompt,
+            prompt: input.wrapPrompt?.(runtime.prompt, runtimeOrdinal) ?? runtime.prompt,
+            ...(input.awaitExitGate === undefined
+              ? {}
+              : {
+                  awaitVerifiedExit: input.awaitExitGate.pipe(
+                    Effect.andThen(runtime.awaitVerifiedExit ?? Effect.never),
+                  ),
+                }),
             cancel:
               input.cancelled === undefined
                 ? runtime.cancel
@@ -686,6 +705,7 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
     runtime,
     natives,
     providerThread,
+    threadId,
     startTurn,
     /** A turn still running makes the next start fail, without waiting on time. */
     nextTurnRejected: (ordinal: number) =>
@@ -5502,9 +5522,11 @@ describe("AcpAdapterV2", () => {
 
   it.effect("fails a prompt its agent leaves silent past the inactivity timeout", () =>
     Effect.gen(function* () {
+      const confirmExit = yield* Deferred.make<void>();
       const harness = yield* makePromptInactivityHarness({
         environment: (runtimeOrdinal) =>
           runtimeOrdinal === 1 ? { T3_ACP_HANG_PROMPT_FOREVER: "1" } : {},
+        awaitExitGate: Deferred.await(confirmExit),
       });
       const thought = (sessionId: string) => ({
         sessionId,
@@ -5526,13 +5548,113 @@ describe("AcpAdapterV2", () => {
       yield* TestClock.adjust(Duration.millis(10 * 60_000 - 1));
       assert.isTrue(yield* harness.nextTurnRejected(2));
 
+      const terminalBeforeExit = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
       yield* TestClock.adjust("1 millis");
+      const early = terminalBeforeExit.pollUnsafe();
+      yield* Deferred.succeed(confirmExit, undefined);
+      assert.isUndefined(early);
+      const silent = Option.getOrUndefined(yield* Fiber.join(terminalBeforeExit));
       yield* harness.startTurn(2);
-      const [silent, next] = yield* harness.terminals(2);
+      const [next] = yield* harness.terminals(1);
       assert.equal(silent?.status, "failed");
       assert.include(silent?.failure?.message, "15 minutes");
       assert.equal(next?.status, "completed");
       assert.lengthOf(harness.natives, 2);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([false, true])(
+    "waits for verified exit after a prompt transport failure (Stop: %s)",
+    (stop) =>
+      Effect.gen(function* () {
+        const rejectPrompt = yield* Deferred.make<void>();
+        const confirmExit = yield* Deferred.make<void>();
+        const checkingExit = yield* Deferred.make<void>();
+        const harness = yield* makePromptInactivityHarness({
+          environment: (runtimeOrdinal) =>
+            runtimeOrdinal === 1 ? { T3_ACP_HANG_PROMPT_FOREVER: "1" } : {},
+          wrapPrompt: (prompt, runtimeOrdinal) => (params, options) =>
+            runtimeOrdinal !== 1
+              ? prompt(params, options)
+              : Effect.raceFirst(
+                  prompt(params, options),
+                  Deferred.await(rejectPrompt).pipe(
+                    Effect.andThen(
+                      new EffectAcpErrors.AcpTransportError({
+                        detail: "Fixture lost the prompt transport.",
+                        cause: undefined,
+                      }),
+                    ),
+                  ),
+                ),
+          awaitExitGate: Deferred.succeed(checkingExit, undefined).pipe(
+            Effect.andThen(Deferred.await(confirmExit)),
+          ),
+        });
+        yield* harness.startTurn(1);
+        const running = Option.getOrUndefined(
+          yield* harness.runtime.events.pipe(
+            Stream.filter((event) => event.type === "provider_turn.updated"),
+            Stream.runHead,
+          ),
+        );
+        assert(running?.type === "provider_turn.updated");
+        const providerTurnId = running.providerTurn.id;
+        const terminals = yield* harness.terminals(1).pipe(Effect.forkChild);
+        yield* Deferred.succeed(rejectPrompt, undefined);
+        yield* TestClock.adjust("1 millis");
+        const early = terminals.pollUnsafe();
+        assert.isUndefined(early);
+        yield* Deferred.await(checkingExit);
+        const steer = yield* harness.runtime
+          .steerTurn({
+            threadId: harness.threadId,
+            runId: RunId.make("acp-quarantined-steer"),
+            providerThread: harness.providerThread,
+            providerTurnId,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make("acp-quarantined-steer"),
+              text: "This must not reach the retired runtime.",
+              attachments: [],
+            },
+          })
+          .pipe(Effect.flip);
+        assert.equal(steer._tag, "ProviderAdapterSteerRunError");
+        if (stop)
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId,
+          });
+        assert.isUndefined(terminals.pollUnsafe());
+        yield* Deferred.succeed(confirmExit, undefined);
+        const [terminal] = yield* Fiber.join(terminals);
+        assert.equal(terminal?.status, stop ? "interrupted" : "failed");
+        yield* harness.startTurn(2);
+        const [next] = yield* harness.terminals(1);
+        assert.equal(next?.status, "completed");
+        assert.lengthOf(harness.natives, 2);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps started background work after an ACP prompt error reply", () =>
+    Effect.gen(function* () {
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({
+          T3_ACP_EMIT_TRACKED_TOOL_KIND_RUNNING: "execute",
+          T3_ACP_FAIL_PROMPT: "1",
+        }),
+        trackBackgroundTool: true,
+      });
+      yield* harness.startTurn(1);
+      const [failed] = yield* harness.terminals(1);
+      assert(failed?.status === "failed");
+      assert.isTrue(failed.childTurnsContinue);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -5778,9 +5900,13 @@ describe("AcpAdapterV2", () => {
         ),
         Stream.runHead,
       );
+      const verified = yield* (harness.runtime.awaitVerifiedRuntimeExit ?? Effect.never).pipe(
+        Effect.forkChild,
+      );
       yield* harness.natives[0]!.notify("_test/exit", {});
       const [exited] = yield* harness.terminals(1);
       assert.equal(exited?.status, "failed");
+      yield* Fiber.join(verified);
 
       // The replacement's silent prompt still times out.
       yield* harness.startTurn(2);

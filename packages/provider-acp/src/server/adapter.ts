@@ -2759,13 +2759,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             }),
           ).pipe(Effect.asVoid);
+        const observeRuntimeTermination = (generation: number) =>
+          runRuntimeCallbackAtGeneration(
+            generation,
+            Effect.gen(function* () {
+              yield* Ref.set(runtimeRestartRequired, true);
+              yield* (runtime.awaitVerifiedExit ?? Effect.never).pipe(
+                Effect.andThen(handleRuntimeTerminationAtGeneration(generation)),
+                Effect.forkIn(sessionScope),
+              );
+            }),
+          ).pipe(Effect.asVoid);
         const makeRuntimeInput = (
           runtimeGeneration: number,
           agentRequests: Set<string>,
           mcpContext: AcpMcpContext,
           resumeSessionId?: string,
           onTermination: AcpAdapterV2RuntimeInput["onTermination"] = () =>
-            handleRuntimeTerminationAtGeneration(runtimeGeneration),
+            observeRuntimeTermination(runtimeGeneration),
         ): AcpAdapterV2RuntimeInput => {
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
@@ -7736,7 +7747,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               candidateLifecycle,
               (current): readonly [Effect.Effect<void>, CandidateLifecycle] => {
                 if (current._tag === "Committed") {
-                  return [handleRuntimeTerminationAtGeneration(replacementGeneration), current];
+                  return [observeRuntimeTermination(replacementGeneration), current];
                 }
                 return [
                   Effect.void,
@@ -8725,10 +8736,37 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return false;
         });
 
-        /**
-         * Holds the transition permit from the deadline check through process teardown,
-         * so Stop and the next turn see either a running prompt or a replaced runtime.
-         */
+        let retiringPrompt: ActiveAcpTurn | undefined;
+        const quarantinePrompt = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          generation: number,
+        ) {
+          retiringPrompt = context;
+          openAgentRequests.clear();
+          yield* quarantineNativeTransportAtGeneration(generation);
+          yield* advanceRuntimeCallbackGeneration;
+          yield* Ref.set(runtimeRestartRequired, true);
+          yield* cancelPendingRuntimeRequests();
+        });
+
+        const finishRetiredPrompt = Effect.fn("AcpAdapterV2.finishRetiredPrompt")(function* (
+          context: ActiveAcpTurn,
+          failure: NonNullable<Parameters<typeof finalizeTurn>[2]>,
+        ) {
+          const verifiedExit = runtime.awaitVerifiedExit;
+          const closingScope = runtimeScope;
+          if (closingScope !== undefined) yield* Scope.close(closingScope, Exit.void);
+          yield* verifiedExit ?? Effect.never;
+          yield* runtimeCallbackPermit.withPermit(
+            Effect.gen(function* () {
+              const status = context.interrupted ? "interrupted" : "failed";
+              if (status === "failed") yield* terminalizeOpenForegroundTools(context, status);
+              yield* finalizeTurn(context, status, context.interrupted ? undefined : failure);
+              retiringPrompt = undefined;
+            }),
+          );
+        });
+
         const retireInactivePrompt = Effect.fn("AcpAdapterV2.retireInactivePrompt")(function* (
           context: ActiveAcpTurn,
           generation: number,
@@ -8747,21 +8785,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 return "rearm" as const;
               }
               context.inactivityWatchdog = undefined;
-              openAgentRequests.clear();
-              yield* quarantineNativeTransportAtGeneration(generation);
-              yield* advanceRuntimeCallbackGeneration;
-              yield* Ref.set(runtimeRestartRequired, true);
-              yield* cancelPendingRuntimeRequests();
-              yield* terminalizeOpenForegroundTools(context, "failed");
-              const minutes = Math.max(1, Math.round(timeoutMillis / 60_000));
-              yield* finalizeTurn(
-                context,
-                "failed",
-                makeProviderFailure({
-                  class: "provider_error",
-                  message: `${flavor.runtimeHarness ?? driver} sent nothing for ${minutes} ${minutes === 1 ? "minute" : "minutes"}, so T3 Code stopped the turn and restarted the agent. Send a message to continue.`,
-                }),
-              );
+              yield* quarantinePrompt(context, generation);
               return "retired" as const;
             }),
           );
@@ -8774,9 +8798,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             providerTurnId: context.providerTurnId,
             timeoutMillis,
           });
-          if (runtimeScope !== undefined) {
-            yield* Scope.close(runtimeScope, Exit.void).pipe(Effect.ignore);
-          }
+          const minutes = Math.max(1, Math.round(timeoutMillis / 60_000));
+          yield* finishRetiredPrompt(
+            context,
+            makeProviderFailure({
+              class: "provider_error",
+              message: `${flavor.runtimeHarness ?? driver} sent nothing for ${minutes} ${minutes === 1 ? "minute" : "minutes"}, so T3 Code stopped the turn and restarted the agent. Send a message to continue.`,
+            }),
+          ).pipe(Effect.forkIn(sessionScope));
           return "retired" as const;
         });
 
@@ -9119,13 +9148,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       error.success._tag === "AcpRequestError" &&
                       error.success.code === -32800);
                   const failure = Cause.squash(cause);
+                  const providerFailure =
+                    flavor.promptFailure?.(failure) ??
+                    makeProviderFailure({ cause: failure, class: "provider_error" });
                   if (!interrupted && flavor.restartRuntimeAfterPromptError?.(failure) === true) {
                     yield* Ref.set(runtimeRestartRequired, true);
                   }
-                  // An agent that answered with an error may still finish tools it started,
-                  // never pending ones; any other failure means its process or pipe is gone.
                   const agentAnswered =
                     Result.isSuccess(error) && error.success._tag === "AcpRequestError";
+                  if (!interrupted && !agentAnswered) {
+                    yield* quarantinePrompt(context, settle.generation);
+                    return providerFailure;
+                  }
                   if (!interrupted) {
                     yield* terminalizeOpenForegroundTools(context, "failed", {
                       unstartedOnly: agentAnswered,
@@ -9134,11 +9168,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   yield* finalizeTurn(
                     context,
                     interrupted ? "interrupted" : "failed",
-                    flavor.promptFailure?.(failure) ??
-                      makeProviderFailure({
-                        cause: failure,
-                        class: "provider_error",
-                      }),
+                    providerFailure,
+                    { childTurnsContinue: !interrupted && hasSurvivingBackgroundWork(context) },
                   ).pipe(
                     Effect.andThen(
                       Effect.logWarning("orchestration-v2.acp-prompt-failed", {
@@ -9151,7 +9182,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     ),
                   );
                 }),
-              ).pipe(Effect.asVoid),
+              ).pipe(
+                Effect.flatMap((retired) => {
+                  const failure = Option.getOrUndefined(retired);
+                  return failure === undefined
+                    ? Effect.void
+                    : finishRetiredPrompt(context, failure);
+                }),
+              ),
             ),
           );
         };
@@ -9539,6 +9577,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const startTurn = Effect.fn("AcpAdapterV2.startTurn.transition")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
         ) {
+          const retiring = retiringPrompt;
+          if (retiring !== undefined) yield* Deferred.await(retiring.completed);
           return yield* runtimeTransitionPermit.withPermit(startTurnUnlocked(turnInput));
         });
 
@@ -9560,6 +9600,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const context = yield* Ref.get(activeTurn);
               if (
                 context === null ||
+                context === retiringPrompt ||
                 context.finalized ||
                 context.interrupted ||
                 context.providerTurnId !== turnInput.providerTurnId
@@ -9722,6 +9763,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           },
           canResumeAfterRestart: canLoadSession || canResumeSession,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          awaitVerifiedRuntimeExit: Effect.suspend(() => runtime.awaitVerifiedExit ?? Effect.never),
           ...(flavor.getModelContextWindow === undefined
             ? {}
             : {
@@ -9937,6 +9979,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const context = yield* Ref.get(activeTurn);
               if (
                 context === null ||
+                context === retiringPrompt ||
                 context.finalized ||
                 context.providerTurnId !== turnInput.providerTurnId
               ) {
@@ -10029,6 +10072,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const transitionFiber = yield* Effect.gen(function* () {
                     const transition = yield* Effect.gen(function* () {
                       const interruptContext = yield* Ref.get(activeTurn);
+                      if (
+                        interruptContext !== null &&
+                        interruptContext === retiringPrompt &&
+                        interruptContext.providerTurnId === turnInput.providerTurnId
+                      ) {
+                        interruptContext.interrupted = true;
+                        return undefined;
+                      }
                       if (
                         followsAgentWorkState &&
                         turnInput.requestRuntimeRestart === true &&

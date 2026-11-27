@@ -929,6 +929,7 @@ describe("CodexAdapterV2 process exit", () => {
     { exit: "SIGKILL", active: false },
     { exit: "numeric", active: true },
     { exit: "SIGKILL", active: true },
+    { exit: "wire failure", active: true },
   ] as const)("retires the shared session after $exit (active turn: $active)", ({ exit, active }) =>
     Effect.gen(function* () {
       const scenario = `process-exit-${exit}-${active}`;
@@ -938,6 +939,7 @@ describe("CodexAdapterV2 process exit", () => {
       const emit = (frame: unknown) =>
         Queue.offer(input, new TextEncoder().encode(JSON.stringify(frame) + "\n"));
       const outputEnded = yield* Deferred.make<void>();
+      const nativeExited = yield* Deferred.make<void>();
       const turnStarted = yield* Deferred.make<void>();
       const turnCompleted = yield* Deferred.make<void>();
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
@@ -988,7 +990,9 @@ describe("CodexAdapterV2 process exit", () => {
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
-        clientFactory: { open: () => Effect.succeed(client) },
+        clientFactory: {
+          open: () => Effect.succeed({ ...client, awaitProcessExit: Deferred.await(nativeExited) }),
+        },
         digest: yield* Digest.Digest,
         fileSystem: yield* FileSystem.FileSystem,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
@@ -1053,11 +1057,15 @@ describe("CodexAdapterV2 process exit", () => {
         );
       }
 
-      yield* Queue.end(input);
+      if (exit === "wire failure") {
+        yield* Queue.offer(input, new TextEncoder().encode("{invalid\n"));
+      } else {
+        yield* Queue.end(input);
+      }
       // Output closes only after the protocol records the process termination.
       yield* Deferred.await(outputEnded);
       const rpcError = yield* client.request("thread/list", {}).pipe(Effect.flip);
-      assert.strictEqual(rpcError, terminationError);
+      if (exit !== "wire failure") assert.strictEqual(rpcError, terminationError);
       // Without the fix the stream never ends, so this waits until the project timeout.
       const readerExit = yield* Fiber.await(eventReader);
       // A failure, not a clean end, carries the Codex error into the session's lastError.
@@ -1066,6 +1074,19 @@ describe("CodexAdapterV2 process exit", () => {
           isProviderAdapterEventStreamError(Cause.squash(readerExit.cause)),
         "the session manager must receive process death so it can retire the shared process",
       );
+      if (exit === "wire failure") {
+        const error = Exit.isFailure(readerExit) ? Cause.squash(readerExit.cause) : undefined;
+        assert(isProviderAdapterEventStreamError(error));
+        assert.isUndefined(error.runtimeEnded);
+        assert.isDefined(runtime.awaitVerifiedRuntimeExit);
+        const verified = yield* (runtime.awaitVerifiedRuntimeExit ?? Effect.never).pipe(
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("1 millis");
+        assert.isUndefined(verified.pollUnsafe());
+        yield* Deferred.succeed(nativeExited, undefined);
+        yield* Fiber.join(verified);
+      }
     }).pipe(
       Effect.scoped,
       Effect.provide(

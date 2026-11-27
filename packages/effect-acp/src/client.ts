@@ -1433,3 +1433,10 @@ export const layerChildProcess = (
   const terminationError = makeTerminationError(handle);
   return Layer.effect(AcpClient, make(stdio, options, terminationError));
 };
+
+export const awaitChildProcessExit = (handle: ChildProcessSpawner.ChildProcessHandle) =>
+  makeTerminationError(handle).pipe(
+    Effect.flatMap((error) =>
+      error._tag === "AcpProcessExitedError" ? Effect.void : Effect.never,
+    ),
+  );

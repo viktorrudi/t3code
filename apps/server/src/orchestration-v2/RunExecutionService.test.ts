@@ -2413,10 +2413,10 @@ it.effect.each(["process exit", "transport failure", "session detach"] as const)
               assert.isFalse(yield* Deferred.isDone(released));
               yield* Deferred.succeed(processExited, undefined);
             }
+            yield* Deferred.await(released);
           }),
         },
       );
-      yield* Deferred.await(released);
     }),
 );
 
@@ -2486,6 +2486,60 @@ it.effect("interrupts an accepted provider turn reported after Stop and retains 
     );
     yield* Deferred.await(released);
   }),
+);
+
+it.effect.each(["transport failure", "verified exit"] as const)(
+  "holds admission after a successful start until %s is handled safely",
+  (reason) =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const released = yield* Deferred.make<void>();
+      const started = yield* Deferred.make<void>();
+      const loseStream = yield* Deferred.make<void>();
+      const subscriptionClosed = yield* Deferred.make<void>();
+      const exited = yield* Deferred.make<void>();
+      yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined)).pipe(
+        Scope.provide(scope),
+      );
+      const key = "accepted-before-provider-stream-failed";
+      const streamError = new ProviderAdapter.ProviderAdapterEventStreamError({
+        driver,
+        providerSessionId: ProviderSessionId.make(`session:${key}`),
+        ...(reason === "verified exit" ? { runtimeEnded: true } : {}),
+        cause: reason,
+      });
+      yield* runBackgroundItemScenario(
+        key,
+        () =>
+          Stream.fromEffect(
+            Deferred.await(loseStream).pipe(Effect.andThen(Effect.fail(streamError))),
+          ),
+        {
+          admission: { scope, handOff: Effect.void },
+          claimsTurnDelivery: true,
+          ...(reason === "transport failure"
+            ? { awaitVerifiedRuntimeExit: Deferred.await(exited) }
+            : {}),
+          startTurn: (input) =>
+            ProviderAdapter.claimTurnDelivery(input).pipe(
+              Effect.andThen(Deferred.succeed(started, undefined)),
+              Effect.asVoid,
+            ),
+          onSubscriptionClosed: Deferred.succeed(subscriptionClosed, undefined).pipe(Effect.asVoid),
+          progressWhileStarting: Effect.gen(function* () {
+            yield* Deferred.await(started);
+            yield* Deferred.succeed(loseStream, undefined);
+            yield* Deferred.await(subscriptionClosed);
+            if (reason === "transport failure") {
+              yield* TestClock.adjust("1 millis");
+              assert.isFalse(yield* Deferred.isDone(released));
+              yield* Deferred.succeed(exited, undefined);
+            }
+            yield* Deferred.await(released);
+          }),
+        },
+      );
+    }),
 );
 
 it.effect.each(["before", "after"] as const)(
@@ -5227,52 +5281,60 @@ function runBackgroundItemScenario(
   });
 }
 
-it.effect("keeps a failed root's still-running native children live while the run settles", () =>
-  Effect.gen(function* () {
-    const finalized = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
-    const childTurn = (
-      ids: BackgroundScenarioIds,
-      status: "running" | "completed",
-    ): ProviderAdapter.ProviderAdapterV2Event =>
-      ({
-        type: "provider_turn.updated",
-        driver,
-        threadId: ids.childThreadId,
-        providerTurn: {
-          id: ProviderTurnId.make(`${ids.rootProviderTurnId}:child`),
-          providerThreadId: ProviderThreadId.make(`${ids.providerThreadId}:child`),
-          nodeId: NodeId.make(`${ids.subagentNodeId}:child-root`),
-          runAttemptId: null,
-          status,
+it.effect.each(["failed", "interrupted"] as const)(
+  "keeps tracked native children live while the %s root settles",
+  (status) =>
+    Effect.gen(function* () {
+      const admissionScope = yield* Scope.make();
+      const finalized = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+      const childTurn = (
+        ids: BackgroundScenarioIds,
+        status: "running" | "completed",
+      ): ProviderAdapter.ProviderAdapterV2Event =>
+        ({
+          type: "provider_turn.updated",
+          driver,
+          threadId: ids.childThreadId,
+          providerTurn: {
+            id: ProviderTurnId.make(`${ids.rootProviderTurnId}:child`),
+            providerThreadId: ProviderThreadId.make(`${ids.providerThreadId}:child`),
+            nodeId: NodeId.make(`${ids.subagentNodeId}:child-root`),
+            runAttemptId: null,
+            status,
+          },
+        }) as ProviderAdapter.ProviderAdapterV2Event;
+      const observed = yield* runBackgroundItemScenario(
+        `${status}-root-live-child`,
+        (ids) => [
+          childThreadCreatedEvent(ids),
+          subagentEvent(ids, "running"),
+          childTurn(ids, "running"),
+          status === "failed"
+            ? { ...rootTerminalEvent(ids, status), childTurnsContinue: true }
+            : rootTerminalEvent(ids, status),
+          subagentEvent(ids, "completed"),
+          childTurn(ids, "completed"),
+        ],
+        {
+          admission: { scope: admissionScope, handOff: Effect.void },
+          keepEventStreamOpen: true,
+          onFinalized: (events) => Ref.set(finalized, events),
         },
-      }) as ProviderAdapter.ProviderAdapterV2Event;
-    const observed = yield* runBackgroundItemScenario(
-      "failed-root-live-child",
-      (ids) => [
-        childThreadCreatedEvent(ids),
-        subagentEvent(ids, "running"),
-        childTurn(ids, "running"),
-        { ...rootTerminalEvent(ids, "failed"), childTurnsContinue: true },
-        subagentEvent(ids, "completed"),
-        childTurn(ids, "completed"),
-      ],
-      {
-        keepEventStreamOpen: true,
-        onFinalized: (events) => Ref.set(finalized, events),
-      },
-    );
+      );
 
-    assert.deepEqual(observed, ["subagent:running", "root-finalized", "subagent:completed"]);
-    const written = yield* Ref.get(finalized);
-    assert.deepEqual(
-      written.flatMap((event) => (event.type === "run.updated" ? [event.payload.status] : [])),
-      ["failed"],
-    );
-    assert.isFalse(
-      written.some((event) => event.type === "subagent.updated"),
-      "a child that outlives the failed root must not be settled with it",
-    );
-  }),
+      assert.deepEqual(observed, ["subagent:running", "root-finalized", "subagent:completed"]);
+      const written = yield* Ref.get(finalized);
+      assert.deepEqual(
+        written.flatMap((event) => (event.type === "run.updated" ? [event.payload.status] : [])),
+        [status],
+      );
+      if (status === "failed") {
+        assert.isFalse(
+          written.some((event) => event.type === "subagent.updated"),
+          "a child that outlives the failed root must not be settled with it",
+        );
+      }
+    }),
 );
 
 it.effect.each([

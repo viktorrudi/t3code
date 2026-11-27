@@ -113,6 +113,7 @@ import {
 import { resolveProviderCatalog } from "../../provider/ModelManifest.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
@@ -3046,10 +3047,13 @@ describe("ClaudeAdapterV2 native fork", () => {
   );
 });
 
-function makeFakeClaudeCli(answerSetServers = true) {
+function makeFakeClaudeCli(answerSetServers = true, deferExit = false) {
   const spawns: Array<SpawnOptions> = [];
   const controlRequests: Array<object> = [];
   const stdins: Array<NodeStream.PassThrough> = [];
+  const killSignals: Array<NodeJS.Signals | number | undefined> = [];
+  const closing = Promise.withResolvers<void>();
+  let exit = () => {};
   const spawn = (options: SpawnOptions): SpawnedProcess => {
     spawns.push(options);
     const stdin = new NodeStream.PassThrough();
@@ -3060,12 +3064,20 @@ function makeFakeClaudeCli(answerSetServers = true) {
       stdout,
       killed: false,
       exitCode: null as number | null,
-      kill: () => {
-        stdout.end();
-        child.emit("exit", null, "SIGTERM");
+      kill: (signal?: NodeJS.Signals | number) => {
+        killSignals.push(signal);
+        closing.resolve();
+        if (!deferExit || signal === "SIGKILL") {
+          stdout.end();
+          child.emit("exit", null, signal ?? "SIGTERM");
+        }
         return true;
       },
     });
+    exit = () => {
+      stdout.end();
+      child.emit("exit", 0, null);
+    };
     let pending = "";
     stdin.on("data", (chunk: Buffer) => {
       pending += chunk.toString("utf8");
@@ -3085,13 +3097,21 @@ function makeFakeClaudeCli(answerSetServers = true) {
       }
     });
     stdin.on("end", () => {
-      stdout.end();
-      child.emit("exit", 0, null);
+      closing.resolve();
+      if (!deferExit) exit();
     });
     return child;
   };
   const closed = () => stdins.length > 0 && stdins.every((stdin) => stdin.writableEnded);
-  return { spawn, spawns, controlRequests, closed };
+  return {
+    spawn,
+    spawns,
+    controlRequests,
+    closed,
+    killSignals,
+    closing: closing.promise,
+    exit: () => exit(),
+  };
 }
 
 describe("ClaudeAdapterV2 MCP credential channel", () => {
@@ -3103,6 +3123,7 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
   const openWith = (
     cli: ReturnType<typeof makeFakeClaudeCli>,
     native?: ProviderEventLoggers.EventNdjsonLogger,
+    nativeBinary = false,
   ) =>
     Effect.gen(function* () {
       const runner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner;
@@ -3119,7 +3140,7 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
             environment: { PATH: "/usr/bin" },
             mcpServers: { "t3-code": t3McpServer },
           }),
-          pathToClaudeCodeExecutable: "/opt/claude/cli.js",
+          pathToClaudeCodeExecutable: nativeBinary ? "/opt/claude/cli" : "/opt/claude/cli.js",
           spawnClaudeCodeProcess: cli.spawn,
         },
       });
@@ -3131,6 +3152,49 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
       }),
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
+
+  it.effect("gives a closing Claude query time to exit before sending SIGKILL", () =>
+    Effect.gen(function* () {
+      const cli = makeFakeClaudeCli(true, true);
+      const session = yield* openWith(cli);
+      const closing = yield* session.close.pipe(Effect.forkChild);
+      yield* Effect.promise(() => cli.closing);
+      yield* TestClock.adjust("1 millis");
+      assert.notInclude(cli.killSignals, "SIGKILL");
+      assert.isUndefined(closing.pollUnsafe());
+      cli.exit();
+      yield* Fiber.join(closing);
+      assert.notInclude(cli.killSignals, "SIGKILL");
+    }),
+  );
+
+  it.effect("reports Claude process exit only after the agent scope is reaped", () =>
+    Effect.gen(function* () {
+      const cli = makeFakeClaudeCli(true, true);
+      const reap = yield* Deferred.make<void>();
+      const entered = yield* Deferred.make<void>();
+      const finished = yield* Deferred.make<void>();
+      const session = yield* openWith(cli, undefined, true).pipe(
+        Effect.provideService(AgentScope, {
+          ...AgentScope.defaultValue(),
+          wrap: (input) =>
+            Effect.succeed({ command: input.command, args: input.args, unit: "t3-fixture.scope" }),
+          stop: () =>
+            Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(reap))),
+        }),
+      );
+      yield* (session.awaitProcessExit ?? Effect.die("Missing process exit signal")).pipe(
+        Effect.andThen(Deferred.succeed(finished, undefined)),
+        Effect.forkChild,
+      );
+      cli.exit();
+      yield* TestClock.adjust("1 millis");
+      assert.isFalse(yield* Deferred.isDone(finished));
+      yield* Deferred.await(entered);
+      yield* Deferred.succeed(reap, undefined);
+      yield* Deferred.await(finished);
+    }),
+  );
 
   it.effect("commits queued delivery before interruptible protocol logging", () =>
     Effect.gen(function* () {
@@ -14776,16 +14840,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
         "claude-query-dies-before-frame",
       );
-      const started = yield* harness.runtime.startTurn(harness.turnInput("a", 1)).pipe(Effect.exit);
+      const started = yield* harness.runtime
+        .startTurn({ ...harness.turnInput("a", 1), claimDelivery: Effect.succeed(true) })
+        .pipe(Effect.result);
       assert.isTrue(
-        Exit.isFailure(started),
+        started._tag === "Failure",
         "a turn whose Claude query ended before its first frame started running on the dead query",
       );
-      if (Exit.isFailure(started)) {
+      if (started._tag === "Failure") {
         assert.include(
-          Cause.pretty(started.cause),
-          "Claude provider query ended before the turn could start.",
+          Cause.pretty(Cause.fail(started.failure)),
+          "Claude provider query ended before the turn could start",
         );
+        assert(ProviderAdapter.isProviderAdapterTurnStartError(started.failure));
+        assert.equal(started.failure.outcome, "not_delivered");
       }
       const followUp = yield* harness.runtime
         .startTurn(harness.turnInput("b", 2))

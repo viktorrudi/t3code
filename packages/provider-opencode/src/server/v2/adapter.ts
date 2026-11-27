@@ -690,7 +690,7 @@ const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
   "SkillNotFoundError",
 ]);
 
-export const OPENCODE_2_STILL_STOPPING =
+const OPENCODE_2_STILL_STOPPING =
   "OpenCode is still stopping the previous turn. Send the message again in a moment.";
 const REQUEST_REPLY_TIMEOUT = "10 seconds";
 
@@ -885,7 +885,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       updatedAt: now,
       lastError: null,
     };
-    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
+    const events = yield* Queue.unbounded<
+      ProviderAdapter.ProviderAdapterV2Event,
+      Cause.Done | ProviderAdapter.ProviderAdapterEventStreamError
+    >();
     const threads = new Map<string, ThreadState>();
     const childOwners = new Map<string, ThreadState>();
     const announced = new Map<string, EventOf<"session.created">["data"]>();
@@ -3570,22 +3573,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const failAll = Effect.fnUntraced(function* (message: string) {
       streamFailure = message;
       yield* Deferred.succeed(reconnected, undefined);
-      for (const state of threads.values()) {
-        const failure = makeProviderFailure({ message, class: "transport_error" });
-        yield* finishTurn(state, { status: "failed", failure }, "broken");
-      }
-      for (const state of threads.values()) {
-        for (const call of runningCalls(state)) yield* settleCall(call, "failed");
-        for (const [jobID, job] of state.imageJobs) {
-          if (job.status !== "running") continue;
-          yield* imageReport(state, { text: message, metadata: { jobID, state: "error" } });
-        }
-        for (const wake of state.wakes.splice(0)) wake.dropped = true;
-        state.reports.clear();
-        yield* syncRosterAncestors(state);
-      }
       yield* setSessionStatus("error", message);
-      yield* Queue.end(events);
+      yield* Queue.fail(
+        events,
+        new ProviderAdapter.ProviderAdapterEventStreamError({
+          driver,
+          providerSessionId: input.providerSessionId,
+          cause: message,
+        }),
+      );
     });
     const backfill = Effect.fnUntraced(function* (sessionId: string, state: ThreadState) {
       const turn = state.active;

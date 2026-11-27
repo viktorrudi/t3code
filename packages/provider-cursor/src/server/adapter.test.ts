@@ -23,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -31,6 +32,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -355,7 +357,7 @@ describe("CursorAdapterV2", () => {
     },
     {
       reason: "the SDK rate limit that broke the run",
-      verifyEnded: Effect.succeed(true),
+      verifyEnded: "after-wait" as const,
       wait: Effect.fail(
         new CursorAgentSdk.CursorAgentSdkRunnerError({
           method: "run.wait",
@@ -480,6 +482,7 @@ describe("CursorAdapterV2", () => {
   ])("ends the turn with $reason", (fixture) =>
     Effect.gen(function* () {
       const { updates = [], wait, failure, answers, usage, contextFill, verifyEnded } = fixture;
+      let exitChecks = 0;
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "cursor-v2-failure-",
@@ -513,7 +516,9 @@ describe("CursorAdapterV2", () => {
                     agentId: "native-cursor-failure",
                     runId: "native-cursor-run",
                     wait,
-                    ...(verifyEnded === undefined ? {} : { verifyEnded }),
+                    ...(verifyEnded === undefined
+                      ? {}
+                      : { verifyEnded: Effect.sync(() => ++exitChecks > 1) }),
                     cancel: Effect.void,
                   };
                 }),
@@ -574,10 +579,19 @@ describe("CursorAdapterV2", () => {
           attachments: [],
         },
       });
-      const events = yield* runtime.events.pipe(
+      const providerEvents = runtime.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
       );
+      const collector = yield* providerEvents.pipe(Effect.forkChild);
+      if (verifyEnded === "after-wait") {
+        yield* TestClock.adjust("59 seconds");
+        assert.equal(exitChecks, 1);
+        assert.isUndefined(collector.pollUnsafe());
+        yield* TestClock.adjust("1 second");
+        assert.equal(exitChecks, 2);
+      }
+      const events = yield* Fiber.join(collector);
       const terminal = events.find((event) => event.type === "turn.terminal");
       assert.equal(terminal?.status, failure === null ? "completed" : "failed");
       assert.equal(terminal?.failure?.class, failure?.class);
@@ -2917,9 +2931,9 @@ describe("CursorAdapterV2", () => {
     assert.isFalse(CursorAgentSdk.isCursorCancellationError(null));
   });
 
-  it.effect(
-    "rewrites skills on live steers and returns a decline without waiting for completion",
-    () =>
+  it.effect.each([false, true])(
+    "rewrites live steers and waits for native Stop confirmation (cancel times out: %s)",
+    (cancelTimesOut) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const workspace = yield* fileSystem.makeTempDirectoryScoped({
@@ -2948,6 +2962,13 @@ describe("CursorAdapterV2", () => {
           readonly model: { readonly id: string };
           readonly durationMs: number;
         }>();
+        const stoppedResult = {
+          id: "native-cursor-steer-run",
+          requestId: "native-request",
+          status: "cancelled",
+          model: { id: "composer-2.5" },
+          durationMs: 1,
+        } as const;
         const instanceId = ProviderInstanceId.make("cursor");
         const threadId = ThreadId.make("cursor-steer-thread");
         const modelSelection = { instanceId, model: "composer-2.5" };
@@ -2976,13 +2997,7 @@ describe("CursorAdapterV2", () => {
                       cancelled += 1;
                     }).pipe(
                       Effect.andThen(
-                        Deferred.succeed(finished, {
-                          id: "native-cursor-steer-run",
-                          requestId: "native-request",
-                          status: "cancelled" as const,
-                          model: { id: "composer-2.5" },
-                          durationMs: 1,
-                        }),
+                        cancelTimesOut ? Effect.void : Deferred.succeed(finished, stoppedResult),
                       ),
                     ),
                     steer: (text) =>
@@ -3109,10 +3124,27 @@ describe("CursorAdapterV2", () => {
         assert.equal(cancelled, 0);
         const declinedError = Cause.squash(declined.cause);
         assert.instanceOf(declinedError, ProviderAdapter.ProviderAdapterSteerDeclinedError);
-        yield* runtime.interruptTurn({
+        const terminals = yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        const stop = runtime.interruptTurn({
           providerThread,
           providerTurnId,
         });
+        if (cancelTimesOut) {
+          const stopping = yield* stop.pipe(Effect.flip, Effect.forkChild);
+          yield* TestClock.adjust("10 seconds");
+          const timeout = yield* Fiber.join(stopping);
+          assert.equal(timeout._tag, "ProviderAdapterInterruptTimeoutError");
+          assert.isUndefined(terminals.pollUnsafe());
+          yield* Deferred.succeed(finished, stoppedResult);
+        } else {
+          yield* stop;
+        }
+        const terminal = Option.getOrUndefined(yield* Fiber.join(terminals));
+        assert.equal(terminal?.status, "interrupted");
         assert.equal(cancelled, 1);
       }).pipe(
         Effect.scoped,

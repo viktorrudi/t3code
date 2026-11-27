@@ -8050,6 +8050,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           providerSession: session,
           claimsTurnDelivery: true,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          ...(client.awaitProcessExit === undefined
+            ? {}
+            : { awaitVerifiedRuntimeExit: client.awaitProcessExit }),
           canReuseContextUsage: canReuseCodexContextUsage,
           normalizeThreadLoadModelSelection: normalizeCodexThreadLoadModelSelection,
           // Idle release can beat delayed subagent resumes: Codex reports them completed between turns with no resume-expected signal.
