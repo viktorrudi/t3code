@@ -61,20 +61,27 @@ export const replaceOutdatedService = Effect.fn("OpenCode2Service.replaceOutdate
     const service = yield* Service.discover({ file });
     if (service === undefined || !isRegisteredService(service.url, input.serverUrl)) return;
 
+    // The service outlives T3 and serves other environments, so it carries no T3 identity.
+    const environment = Object.fromEntries(
+      Object.entries(input.environment).filter(([name]) => {
+        const upper = name.toUpperCase();
+        return upper !== "T3CODE_ENVIRONMENT_ID" && upper !== "T3CODE_THREAD_ID";
+      }),
+    );
     // Configured variables below can change PATH, which a bare name would then resolve against.
-    const executable = yield* resolveCommandPath(input.binaryPath, { env: input.environment });
+    const executable = yield* resolveCommandPath(input.binaryPath, { env: environment });
     if (executable === null) return;
     // A scope of its own keeps the service alive when T3 Code's systemd unit stops.
     const launch = yield* (yield* AgentScope).wrap({
       command: executable,
       args: ["serve", "--service"],
       name: "opencode-service",
-      env: input.environment,
+      env: environment,
       shared: true,
       survivesRestart: true,
     });
     const command = yield* resolveSpawnCommand(launch.command, launch.args, {
-      env: input.environment,
+      env: environment,
       extendEnv: true,
       bypassNpmShim: true,
     });
@@ -95,7 +102,7 @@ export const replaceOutdatedService = Effect.fn("OpenCode2Service.replaceOutdate
     // The CLI passes configured variables but never lets them move the registration file.
     const { XDG_STATE_HOME: _state, ...configured } = Option.getOrUndefined(config)?.env ?? {};
     const env: Record<string, string> = {};
-    for (const [name, value] of Object.entries({ ...input.environment, ...configured })) {
+    for (const [name, value] of Object.entries({ ...environment, ...configured })) {
       if (value !== undefined) env[name] = value;
     }
 
@@ -108,8 +115,14 @@ export const replaceOutdatedService = Effect.fn("OpenCode2Service.replaceOutdate
         Service.ensure({
           file,
           command: [command.command, ...command.args],
-          // T3 Desktop's backend sets this; undefined overrides the inherited value at spawn.
-          env: { ...env, ELECTRON_RUN_AS_NODE: undefined } as unknown as Record<string, string>,
+          // Undefined overrides inherited values at spawn: T3 Desktop's backend sets the first, and a
+          // server started from a T3 shell inherits the identity.
+          env: {
+            ...env,
+            ELECTRON_RUN_AS_NODE: undefined,
+            T3CODE_ENVIRONMENT_ID: undefined,
+            T3CODE_THREAD_ID: undefined,
+          } as unknown as Record<string, string>,
         }),
       ),
       Effect.uninterruptible,

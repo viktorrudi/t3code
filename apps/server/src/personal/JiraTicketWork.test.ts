@@ -106,7 +106,7 @@ const cases = [
   },
   {
     name: "lets legacy unlink override an own scoped link",
-    tracking: { threads: [], unlinked: ["unlinked"], refs: [ref("unlinked")] },
+    tracking: { threads: ["unlinked"], unlinked: ["unlinked"], refs: [ref("unlinked")] },
     expected: [],
   },
   {
@@ -131,7 +131,7 @@ const cases = [
   {
     name: "keeps native local relations independent of foreign tracking and deduplicates links",
     tracking: {
-      threads: ["native"],
+      threads: ["native", "linked"],
       refs: [ref("native", "other-environment"), ref("linked")],
     },
     native: ["native", "linked"],
