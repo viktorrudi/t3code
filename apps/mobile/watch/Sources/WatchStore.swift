@@ -20,6 +20,10 @@ import WatchKit
     override init() {
         super.init()
         api.setup = WatchKeychain.load()
+        #if DEBUG && targetEnvironment(simulator)
+        // Simulator checks pass a setup through SIMCTL_CHILD_T3_WATCH_SIMULATOR_SETUP; release and device builds omit this.
+        if let raw = ProcessInfo.processInfo.environment["T3_WATCH_SIMULATOR_SETUP"] { api.setup = try? JSONDecoder().decode(WatchSetup.self, from: Data(raw.utf8)).validated() }
+        #endif
         paired = api.setup != nil
         if let data = UserDefaults.standard.data(forKey: "watch.overview") { overview = try? JSONDecoder().decode(Overview.self, from: data); overview?.items = overview?.items.map { $0.cached } ?? [] }
         if let data = UserDefaults.standard.data(forKey: "watch.pendingRoute"), let route = try? JSONDecoder().decode(ChatRoute.self, from: data) { path = [route] }

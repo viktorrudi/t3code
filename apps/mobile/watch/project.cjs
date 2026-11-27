@@ -29,12 +29,24 @@ function settings({ bundleId, version, buildNumber, teamId }) {
     ...(teamId ? { DEVELOPMENT_TEAM: teamId } : {}),
     CODE_SIGN_ENTITLEMENTS: '"$(SRCROOT)/T3Watch/Watch.entitlements"',
     LD_RUNPATH_SEARCH_PATHS: '"$(inherited) @executable_path/Frameworks"',
-    SWIFT_OPTIMIZATION_LEVEL: '"-Onone"',
+    ASSETCATALOG_COMPILER_APPICON_NAME: "AppIcon",
     SKIP_INSTALL: "YES",
   };
 }
-function copySources(destination) {
-  fs.mkdirSync(destination, { recursive: true });
+const contents = (value) => JSON.stringify({ ...value, info: { author: "xcode", version: 1 } });
+function copySources(destination, iconPath) {
+  const icon = path.join(destination, "Assets.xcassets", "AppIcon.appiconset");
+  fs.mkdirSync(icon, { recursive: true });
+  fs.writeFileSync(path.join(destination, "Assets.xcassets", "Contents.json"), contents({}));
+  fs.copyFileSync(iconPath, path.join(icon, "AppIcon.png"));
+  fs.writeFileSync(
+    path.join(icon, "Contents.json"),
+    contents({
+      images: [
+        { filename: "AppIcon.png", idiom: "universal", platform: "watchos", size: "1024x1024" },
+      ],
+    }),
+  );
   for (const file of sourceFiles())
     fs.copyFileSync(path.join(__dirname, "Sources", file), path.join(destination, file));
   fs.copyFileSync(
@@ -60,18 +72,31 @@ function addToProject(project, options) {
   );
   project.addBuildPhase([], "PBXSourcesBuildPhase", "Sources", target.uuid);
   project.addBuildPhase([], "PBXFrameworksBuildPhase", "Frameworks", target.uuid);
-  project.addBuildPhase([], "PBXResourcesBuildPhase", "Resources", target.uuid);
+  const resources = project.addBuildPhase([], "PBXResourcesBuildPhase", "Resources", target.uuid);
   const group = project.addPbxGroup([], "T3Watch", "T3Watch");
   project.addToPbxGroup(group.uuid, project.getFirstProject().firstProject.mainGroup);
   for (const file of sourceFiles())
     project.addSourceFile(file, { target: target.uuid }, group.uuid);
+  const assets = project.generateUuid();
+  objects.PBXFileReference[assets] = {
+    isa: "PBXFileReference",
+    lastKnownFileType: "folder.assetcatalog",
+    path: "Assets.xcassets",
+    sourceTree: '"<group>"',
+  };
+  objects.PBXGroup[group.uuid].children.push({ value: assets, comment: "Assets.xcassets" });
+  const assetsBuild = project.generateUuid();
+  objects.PBXBuildFile[assetsBuild] = { isa: "PBXBuildFile", fileRef: assets };
+  resources.buildPhase.files.push({ value: assetsBuild, comment: "Assets.xcassets in Resources" });
   const list = objects.XCConfigurationList[target.pbxNativeTarget.buildConfigurationList];
   for (const entry of list.buildConfigurations) {
     const config = objects.XCBuildConfiguration[entry.value].buildSettings;
     delete config.INFOPLIST_FILE;
     Object.assign(config, settings(options));
-    config.APS_ENVIRONMENT =
-      objects.XCBuildConfiguration[entry.value].name === "Release" ? "production" : "development";
+    const release = objects.XCBuildConfiguration[entry.value].name === "Release";
+    config.APS_ENVIRONMENT = release ? "production" : "development";
+    config.SWIFT_OPTIMIZATION_LEVEL = release ? '"-O"' : '"-Onone"';
+    if (!release) config.SWIFT_ACTIVE_COMPILATION_CONDITIONS = '"DEBUG $(inherited)"';
   }
   const phase = project.addBuildPhase(
     [],

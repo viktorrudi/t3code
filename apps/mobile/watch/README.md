@@ -10,6 +10,8 @@ Use Xcode 26.4 with watchOS platform support. The minimum deployment target is w
 
 For local development, run `vp run ios:fork:release` with `T3CODE_IOS_FORK_TEAM_ID` set, or run Expo prebuild with `T3CODE_IOS_FORK=1` and open `ios/T3CodePersonal.xcworkspace`. Choose the `T3Watch` scheme with a Watch simulator or a paired Watch that has Developer Mode enabled. The native fingerprint includes the Watch sources.
 
+Debug simulator builds accept a setup through the launch environment, so checks need no typing on the Watch: `SIMCTL_CHILD_T3_WATCH_SIMULATOR_SETUP='{"url":"https://…","token":"…"}' xcrun simctl launch <device> com.viktorrudi.t3code.watchkitapp`. A local HTTPS test gateway needs its certificate trusted with `xcrun simctl keychain <device> add-root-cert`. Release and device builds compile this out.
+
 ## Prepare the Gateway
 
 Build from an installed repository checkout:
