@@ -1,6 +1,7 @@
 import {
   ThreadId,
   ThreadTicketDeploy,
+  ScopedThreadRef,
   type JiraTicketWork,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { listLinkedIssueThreads } from "../issue/linkedThreads.ts";
 import { JIRA_HOST, JIRA_TRACKER, jiraProject, jiraScopes, ticketRoot } from "./SensoneoJira.ts";
 
@@ -73,15 +75,25 @@ const parseTracking = Schema.decodeUnknownOption(
     Schema.Struct({
       threads: Schema.Array(ThreadId),
       unlinked: Schema.optional(Schema.Array(ThreadId)),
+      refs: Schema.optional(Schema.Unknown),
+      unlinkedRefs: Schema.optional(Schema.Unknown),
     }),
   ),
 );
+
+const parseRef = Schema.decodeUnknownOption(ScopedThreadRef);
+
+function trackingRefs(value: unknown) {
+  return Array.isArray(value) ? value.flatMap((entry) => Option.toArray(parseRef(entry))) : [];
+}
 
 export const linkedJiraThreads = Effect.fn("JiraTicketWork.linkedThreads")(function* (key: string) {
   const scope = jiraProject(key);
   if (scope === undefined) return [];
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+  const environmentId = yield* environment.getEnvironmentId;
   const raw = yield* fs
     .readFileString(path.join(ticketRoot(), ".my-docs", key, "tracking.json"))
     .pipe(Effect.orElseSucceed(() => ""));
@@ -92,13 +104,31 @@ export const linkedJiraThreads = Effect.fn("JiraTicketWork.linkedThreads")(funct
     scope,
     key,
   });
-  const local = Option.getOrElse(tracking, () => ({ threads: [], unlinked: [] }));
-  const excluded = new Set(local.unlinked ?? []);
+  const local = Option.getOrElse(tracking, () => ({
+    threads: [],
+    unlinked: [],
+    refs: [],
+    unlinkedRefs: [],
+  }));
+  const refs = trackingRefs(local.refs);
+  const unlinkedRefs = trackingRefs(local.unlinkedRefs);
+  const scoped = new Set([...refs, ...unlinkedRefs].map((ref) => ref.threadId));
+  // Writers mirror own links into `threads`; a ref without its mirror disagrees and stays unlinked.
+  const legacyLinked = new Set(local.threads);
+  const own = refs.filter(
+    (ref) => ref.environmentId === environmentId && legacyLinked.has(ref.threadId),
+  );
+  const excluded = new Set([
+    ...(local.unlinked ?? []),
+    ...unlinkedRefs.filter((ref) => ref.environmentId === environmentId).map((ref) => ref.threadId),
+  ]);
   const threads = yield* Effect.forEach(
     new Set(
-      [...local.threads, ...native.threads.map((thread) => thread.id)].filter(
-        (id) => !excluded.has(id),
-      ),
+      [
+        ...local.threads.filter((id) => !scoped.has(id)),
+        ...own.map((ref) => ref.threadId),
+        ...native.threads.map((thread) => thread.id),
+      ].filter((id) => !excluded.has(id)),
     ),
     (id) => eligibleJiraThread(id, key),
     { concurrency: 4 },

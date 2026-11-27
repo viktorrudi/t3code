@@ -9,6 +9,8 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { EnvironmentId } from "@t3tools/contracts";
 import * as JiraClient from "./JiraClient.ts";
 
 import { make, jiraListQuery } from "./JiraIssueTracker.ts";
@@ -48,7 +50,7 @@ it.effect(
       const detail = yield* tracker.getIssue({ ...input, key: "RET-45" });
       expect(detail.body).toBe("Description");
       expect(detail.jiraDetails?.fields).toEqual([
-        { name: "Expected result", value: "Export succeeds" },
+        { id: "customfield_10211", name: "Expected result", value: "Export succeeds" },
       ]);
       expect(detail.commentCount).toBe(31);
       expect(detail.comments).toHaveLength(30);
@@ -74,6 +76,9 @@ it.effect(
           FileSystem.layerNoop({ readFileString: () => Effect.succeed("") }),
           Layer.mock(Orchestrator.OrchestratorV2)({}),
           Layer.mock(ProjectService.ProjectService)({}),
+          Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+            getEnvironmentId: Effect.succeed(EnvironmentId.make("test-environment")),
+          }),
           Layer.succeed(JiraClient.JiraClient, {
             configuredHost: Effect.succeed(input.host),
             execute: (request) => {

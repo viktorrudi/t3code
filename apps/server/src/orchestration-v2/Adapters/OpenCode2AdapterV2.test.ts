@@ -40,17 +40,13 @@ import * as Stream from "effect/Stream";
 import * as Exit from "effect/Exit";
 import { TestClock } from "effect/testing";
 
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import {
-  OPENCODE_2_STILL_STOPPING,
-  OPENCODE_PROVIDER,
-  t3McpServerName,
-} from "@t3tools/provider-opencode/testing";
+import { OPENCODE_PROVIDER, t3McpServerName } from "@t3tools/provider-opencode/testing";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
 import {
@@ -2735,56 +2731,50 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  it.effect("checks the server before prompting again after a prompt request failed", () =>
+  it.effect("reports a rejected prompt as not delivered", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         reply("session.prompt", {
-          status: 502,
-          body: { _tag: "UnknownError", message: "bad gateway" },
+          status: 409,
+          body: { _tag: "ConflictError", message: "prompt rejected" },
         }),
-        out("session.active"),
-        reply("session.active", { data: { [SESSION]: { type: "running" } } }),
-        out("session.interrupt", { sessionID: SESSION }),
-        reply("session.interrupt", { interrupted: true }),
       ]);
-      const ended = yield* terminals(runtime, 2);
-      yield* runtime.startTurn(turnInput(thread)).pipe(Effect.ignore);
-      yield* runtime.startTurn(secondTurn(thread));
-      const [first, second] = yield* Fiber.join(ended);
+      const ended = yield* terminals(runtime, 1);
+      const error = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.flip);
+      assert(ProviderAdapter.isProviderAdapterTurnStartError(error));
+      assert.equal(error.outcome, "not_delivered");
+      const [first] = yield* Fiber.join(ended);
       assert.equal(first?.status, "failed");
-      assert.equal(second?.failure?.message, OPENCODE_2_STILL_STOPPING);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  // regression: #14744 continuations hung after a reconnect took a Stop's end
-  it.effect("still checks the server when a failed prompt's execution starts late", () =>
+  it.effect("retains the original turn when a failed prompt's execution starts late", () =>
     Effect.gen(function* () {
-      const offered = yield* Deferred.make<void>();
-      const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        reply("session.prompt", {
-          status: 502,
-          body: { _tag: "UnknownError", message: "bad gateway" },
-        }),
-        event("session.execution.started", { sessionID: SESSION }),
-        out("session.active"),
-        reply("session.active", { data: { [SESSION]: { type: "running" } } }),
-        out("session.interrupt", { sessionID: SESSION }),
-        reply("session.interrupt", { interrupted: true }),
-      ]).pipe(
-        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
-          offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
-          take: Effect.never,
-        }),
+      const gate = makeProviderReplayGate(["late-start"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          reply("session.prompt", {
+            status: 502,
+            body: { _tag: "UnknownError", message: "bad gateway" },
+          }),
+          event("session.execution.started", { sessionID: SESSION }, "late-start"),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { replayGate: gate },
       );
-      const ended = yield* terminals(runtime, 2);
-      yield* runtime.startTurn(turnInput(thread)).pipe(Effect.ignore);
-      yield* Deferred.await(offered);
-      yield* runtime.startTurn(secondTurn(thread));
-      const [first, second] = yield* Fiber.join(ended);
-      assert.equal(first?.status, "failed");
-      assert.equal(second?.failure?.message, OPENCODE_2_STILL_STOPPING);
+      const ended = yield* terminals(runtime, 1);
+      const error = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.flip);
+      assert(ProviderAdapter.isProviderAdapterTurnStartError(error));
+      assert.isUndefined(error.outcome);
+      const overlap = yield* runtime.startTurn(secondTurn(thread)).pipe(Effect.flip);
+      assert.equal(overlap._tag, "ProviderAdapterProtocolError");
+      assert.isUndefined(ended.pollUnsafe());
+      gate.release("late-start");
+      const [first] = yield* Fiber.join(ended);
+      assert.equal(first?.runOrdinal, turnInput(thread).runOrdinal);
+      assert.equal(first?.status, "completed");
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
@@ -2896,11 +2886,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  const replyAfterUnclearFailure = (endedFirst: boolean) =>
+  it.effect("routes a background reply to the prompt that started after an unknown response", () =>
     Effect.gen(function* () {
-      const offered =
-        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
-      const gate = makeProviderReplayGate(endedFirst ? ["wake"] : ["wake", "reply"]);
+      const gate = makeProviderReplayGate(["wake"]);
       const { runtime, thread } = yield* resumed(
         [
           ...backgroundLaunch(CHILD),
@@ -2932,43 +2920,26 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             },
           }),
           event("session.execution.started", { sessionID: SESSION }),
-          event(
-            "session.text.ended",
-            {
-              sessionID: SESSION,
-              assistantMessageID: "msg_followup",
-              ordinal: 0,
-              text: "CHILD_OK",
-            },
-            endedFirst ? undefined : "reply",
-          ),
+          event("session.text.ended", {
+            sessionID: SESSION,
+            assistantMessageID: "msg_followup",
+            ordinal: 0,
+            text: "CHILD_OK",
+          }),
           event("session.execution.succeeded", { sessionID: SESSION }),
-          event("session.execution.started", { sessionID: CHILD }),
         ],
         { replayGate: gate },
-      ).pipe(
-        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
-          offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
-          take: Effect.never,
-        }),
       );
       const launched = yield* Deferred.make<void>();
-      const childRan = yield* Deferred.make<void>();
       const ended: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       const allEnded = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
         Stream.tap((event) =>
           Effect.gen(function* () {
-            if (
-              event.type === "provider_turn.updated" &&
-              event.providerTurn.nativeTurnRef?.nativeId?.startsWith(`${CHILD}:turn:`) === true
-            ) {
-              yield* Deferred.succeed(childRan, undefined);
-            }
             if (event.type !== "turn_item.updated" && event.type !== "turn.terminal") return;
             ended.push(event);
             if (event.type === "turn.terminal") yield* Deferred.succeed(launched, undefined);
-            if (ended.filter((entry) => entry.type === "turn.terminal").length === 3) {
+            if (ended.filter((entry) => entry.type === "turn.terminal").length === 2) {
               yield* Deferred.succeed(allEnded, undefined);
             }
           }),
@@ -2982,17 +2953,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         .startTurn({ ...secondTurn(thread), appThread: withLineage(thread).appThread })
         .pipe(Effect.ignore);
       gate.release("wake");
-      if (endedFirst) yield* Deferred.await(childRan);
-      yield* runtime.startTurn({
-        ...continuationTurn(thread, yield* Deferred.await(offered)),
-        runOrdinal: 3,
-        providerTurnOrdinal: 3,
-      });
-      if (!endedFirst) gate.release("reply");
       yield* Deferred.await(allEnded);
       assert.deepEqual(
         ended.flatMap((event) => (event.type === "turn.terminal" ? [event.status] : [])),
-        ["completed", "failed", "completed"],
+        ["completed", "completed"],
       );
       assert.include(
         ended.flatMap((event) =>
@@ -3002,11 +2966,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ),
         "CHILD_OK",
       );
-    }).pipe(Effect.scoped, Effect.provide(TestClock.layer()));
-
-  // regression: #14744 continuations hung after a reconnect took a Stop's end
-  it.effect("ends a background reply's continuation after a prompt failed unclearly", () =>
-    replyAfterUnclearFailure(false),
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.effect("reports a turn as completed when its Stop request failed", () =>
@@ -3971,6 +3931,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             out("session.active"),
             reply("session.active", { status, body: { message: "Unavailable" } }),
           ]).flat(),
+          ...(external
+            ? [
+                out("session.interrupt", { sessionID: SESSION }),
+                reply("session.interrupt", { interrupted: true }),
+              ]
+            : []),
         ],
         {
           external,
@@ -3980,14 +3946,16 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               : Effect.void,
         },
       );
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.result, Effect.forkScoped);
       yield* runtime.startTurn(turnInput(thread));
       for (let attempt = 1; attempt < tries; attempt += 1) {
         yield* Queue.take(attempts);
         yield* TestClock.adjust("2 seconds");
       }
       yield* Queue.take(attempts);
-      assert.equal((yield* Fiber.join(terminal))?.status, "failed");
+      const lost = yield* Fiber.join(terminal);
+      assert(lost._tag === "Failure" && lost.failure._tag === "ProviderAdapterEventStreamError");
+      assert.isUndefined(lost.failure.runtimeEnded);
     }),
   );
 
@@ -4897,7 +4865,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   );
 
   it.effect.each(["root", "child"] as const)(
-    "settles %s native image tasks when reconnect attempts fail",
+    "leaves %s native image work unverified when reconnect attempts fail",
     (owner) =>
       Effect.gen(function* () {
         const attempts = yield* Effect.forEach([0, 1, 2, 3, 4], () => Deferred.make<void>());
@@ -4949,16 +4917,27 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           // A live owned server is retried until it answers; only an external one runs out of attempts.
           { borrowers, external: true },
         );
-        const events = yield* runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
+        const collected: ProviderAdapter.ProviderAdapterV2Event[] = [];
+        const events = yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              collected.push(event);
+            }),
+          ),
+          Effect.result,
+          Effect.forkScoped,
+        );
         yield* runtime.startTurn(withLineage(thread));
         yield* Deferred.await(attempts[0]!);
         for (const attempt of attempts.slice(1)) {
           yield* TestClock.adjust("2 seconds");
           yield* Deferred.await(attempt);
         }
-        const collected = yield* Fiber.join(events);
-        assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-        assert.isTrue(
+        const lost = yield* Fiber.join(events);
+        assert(lost._tag === "Failure" && lost.failure._tag === "ProviderAdapterEventStreamError");
+        assert.isUndefined(lost.failure.runtimeEnded);
+        assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        assert.isFalse(
           collected.some(
             (e) =>
               e.type === "turn_item.updated" &&
@@ -4970,8 +4949,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         const rootSnapshots = collected.flatMap((e) =>
           e.type === "provider_thread.updated" && e.providerThread.id === thread.id ? [e] : [],
         );
-        assert.isFalse(rootSnapshots.at(-1)?.pendingBackgroundWork);
-        assert.deepEqual(rootSnapshots.at(-1)?.providerThread.pendingBackgroundTasks, []);
+        assert.isTrue(rootSnapshots.at(-1)?.pendingBackgroundWork);
         assert.isTrue(
           rootSnapshots.some((e) =>
             e.providerThread.pendingBackgroundTasks?.some((task) => task.taskId === "image_lost"),

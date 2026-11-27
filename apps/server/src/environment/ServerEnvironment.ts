@@ -57,6 +57,20 @@ export class ServerEnvironmentIdentity extends Context.Service<
   }
 >()("t3/environment/ServerEnvironment/ServerEnvironmentIdentity") {}
 
+/** Agents and terminals carry this server's environment id beside PortScanner.AGENT_THREAD_ENV. */
+export const ENVIRONMENT_ID_ENV = "T3CODE_ENVIRONMENT_ID";
+
+/**
+ * A server started from a T3 shell inherits that shell's identity. Paths T3 cannot give their own
+ * environment, such as Cursor's in-process SDK agent, would report it, so the server drops it.
+ */
+export function removeInheritedAgentIdentity(environment: NodeJS.ProcessEnv): void {
+  for (const name of Object.keys(environment)) {
+    const upper = name.toUpperCase();
+    if (upper === ENVIRONMENT_ID_ENV || upper === "T3CODE_THREAD_ID") delete environment[name];
+  }
+}
+
 function platformOs(platform: NodeJS.Platform): ExecutionEnvironmentDescriptor["platform"]["os"] {
   switch (platform) {
     case "darwin":

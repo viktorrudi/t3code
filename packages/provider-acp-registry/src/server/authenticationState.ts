@@ -44,7 +44,10 @@ export const makeAcpRegistryAuthenticationState = Effect.fn("makeAcpRegistryAuth
       commandPath: input.settings.commandPath,
       distribution: input.settings.distribution,
       authMethodId: input.settings.authMethodId,
-      environment: [...input.environment].toSorted((a, b) => a.name.localeCompare(b.name)),
+      // T3 adds its environment id to every instance; it names this host, not the account.
+      environment: input.environment
+        .filter((variable) => variable.name.toUpperCase() !== "T3CODE_ENVIRONMENT_ID")
+        .toSorted((a, b) => a.name.localeCompare(b.name)),
       profiles: [
         "HOME",
         "XDG_CONFIG_HOME",

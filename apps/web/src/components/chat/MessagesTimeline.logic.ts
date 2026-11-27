@@ -27,6 +27,7 @@ import {
   toolGroupAction,
   toolGroupSummaryKind,
   contextCompactionTokenCounts,
+  systemNoticeLabel,
   workEntriesViewedImagePaths,
   type ToolGroupSummaryKind,
   liveThoughtLine,
@@ -149,7 +150,11 @@ export function workEntryDisplayLabel(
   workspaceRoot: string | undefined,
   resolve: MessageResolver = m,
 ) {
-  if (entry.itemType === "system_notice") return entry.label;
+  if (entry.itemType === "system_notice") {
+    return entry.structuredPayload?.type === "system_notice"
+      ? systemNoticeLabel(entry.structuredPayload, resolve)
+      : entry.label;
+  }
   if (entry.itemType === "reasoning" || entry.tone === "thinking") {
     const thought = entry.detail?.trim().replace(/\s+/g, " ");
     return thought || entry.label;

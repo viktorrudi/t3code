@@ -108,22 +108,23 @@ describe("AcpClientTerminals", () => {
             : {
                 T3_ACP_MCP_AUTHORIZATION: sessionId === "session-a" ? "token-a" : "token-b",
                 T3CODE_THREAD_ID: sessionId,
+                T3CODE_ENVIRONMENT_ID: "acp-environment",
               },
       });
       yield* Effect.addFinalizer(() => terminals.disposeAll);
       inheritedEnvironment.T3_TEST_INHERITED = "refreshed";
 
       for (const [sessionId, expected] of [
-        ["session-a", "token-a||session-a|refreshed|T3_TEST_OVERRIDE=request"],
-        ["session-b", "token-b||session-b|refreshed|T3_TEST_OVERRIDE=request"],
-        ["unknown", "|||refreshed|T3_TEST_OVERRIDE=inherited"],
+        ["session-a", "token-a||session-a|acp-environment|refreshed|T3_TEST_OVERRIDE=request"],
+        ["session-b", "token-b||session-b|acp-environment|refreshed|T3_TEST_OVERRIDE=request"],
+        ["unknown", "||||refreshed|T3_TEST_OVERRIDE=inherited"],
       ] as const) {
         const created = yield* terminals.create({
           sessionId,
           command: process.execPath,
           args: [
             "-e",
-            "const env = process.env; process.stdout.write([env.T3_ACP_MCP_AUTHORIZATION ?? '', env.t3_Acp_Mcp_Endpoint ?? '', env.T3CODE_THREAD_ID ?? '', env.T3_TEST_INHERITED, ...Object.keys(env).filter((name) => name.toUpperCase() === 'T3_TEST_OVERRIDE').map((name) => name + '=' + env[name])].join('|'))",
+            "const env = process.env; process.stdout.write([env.T3_ACP_MCP_AUTHORIZATION ?? '', env.t3_Acp_Mcp_Endpoint ?? '', env.T3CODE_THREAD_ID ?? '', env.T3CODE_ENVIRONMENT_ID ?? '', env.T3_TEST_INHERITED, ...Object.keys(env).filter((name) => name.toUpperCase() === 'T3_TEST_OVERRIDE').map((name) => name + '=' + env[name])].join('|'))",
           ],
           ...(sessionId === "unknown"
             ? {}
@@ -132,6 +133,9 @@ describe("AcpClientTerminals", () => {
                   { name: "T3_TEST_OVERRIDE", value: "first" },
                   { name: "t3_Test_Override", value: "second" },
                   { name: "T3_TEST_OVERRIDE", value: "request" },
+                  { name: "t3code_thread_id", value: "request-thread" },
+                  { name: "T3CODE_ENVIRONMENT_ID", value: "request-environment" },
+                  { name: "T3_ACP_MCP_AUTHORIZATION", value: "request-token" },
                 ],
               }),
         });
@@ -145,6 +149,7 @@ describe("AcpClientTerminals", () => {
         T3_ACP_MCP_AUTHORIZATION: "launching-thread-token",
         t3_Acp_Mcp_Endpoint: "launching-thread-endpoint",
         T3CODE_THREAD_ID: "launching-thread",
+        T3CODE_ENVIRONMENT_ID: "launching-environment",
         T3_TEST_INHERITED: "kept",
         T3_TEST_OVERRIDE: "inherited",
       }),

@@ -232,19 +232,25 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
               `ACP terminal/create exceeded the limit of ${MAX_LIVE_TERMINALS} concurrent terminals.`,
             );
           }
-          // Thread credentials and identity must come from the requesting session.
-          const inheritedEnvironment = Object.fromEntries(
-            Object.entries(options.environment ?? (yield* HostProcess.Environment)).filter(
-              ([name]) =>
-                !name.toUpperCase().startsWith("T3_ACP_MCP_") &&
-                name.toUpperCase() !== "T3CODE_THREAD_ID",
-            ),
-          );
+          // Thread credentials and identity come only from the requesting session.
+          const sessionOwned = ([name]: readonly [string, unknown]) => {
+            const upper = name.toUpperCase();
+            return (
+              upper.startsWith("T3_ACP_MCP_") ||
+              upper === "T3CODE_THREAD_ID" ||
+              upper === "T3CODE_ENVIRONMENT_ID"
+            );
+          };
+          const inheritedEnvironment = Object.entries(
+            options.environment ?? (yield* HostProcess.Environment),
+          ).filter((entry) => !sessionOwned(entry));
           const sessionEnvironment = options.environmentForSession?.(request.sessionId);
           const environment = mergeEnvironments(isWindows, [
-            Object.entries(inheritedEnvironment),
+            inheritedEnvironment,
             Object.entries(sessionEnvironment ?? {}),
-            (request.env ?? []).map((variable) => [variable.name, variable.value] as const),
+            (request.env ?? [])
+              .map((variable) => [variable.name, variable.value] as const)
+              .filter((entry) => !sessionOwned(entry)),
           ]);
           const terminalScope = yield* Scope.make();
           const child = yield* restore(

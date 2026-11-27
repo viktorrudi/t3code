@@ -440,12 +440,51 @@ it.effect("marks a never-visited thread's first completion unread", () =>
     yield* TestClock.adjust("1 second");
     const dispatchedAt = yield* DateTime.now;
     yield* dispatch("first-completion-watermark");
+    const activeRun = (yield* projections.getThreadProjection(threadId)).runs[0]!;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const noticeId = TurnItemId.make("skills-admission:completion-watermark");
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("event:skills-admission:completion-watermark"),
+          type: "turn-item.updated",
+          threadId,
+          runId: activeRun.id,
+          nodeId: activeRun.rootNodeId!,
+          occurredAt: dispatchedAt,
+          payload: {
+            type: "system_notice",
+            code: "skills_update_wait",
+            id: noticeId,
+            threadId,
+            runId: activeRun.id,
+            nodeId: activeRun.rootNodeId!,
+            providerThreadId: activeRun.providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "running",
+            level: "info",
+            title: "Waiting for skills update",
+            message: "Waiting for a skills update to finish before starting.",
+            startedAt: dispatchedAt,
+            completedAt: null,
+            updatedAt: dispatchedAt,
+          },
+        },
+      ],
+    });
     yield* orchestrator.dispatch({
       type: "run.interrupt",
       commandId: CommandId.make("interrupt-completion-watermark"),
       threadId,
-      runId: (yield* projections.getThreadProjection(threadId)).runs[0]!.id,
+      runId: activeRun.id,
     });
+    const stoppedNotice = (yield* projections.getThreadProjection(threadId)).turnItems.find(
+      (item) => item.id === noticeId,
+    );
+    assert.include(stoppedNotice, { status: "interrupted", message: "Interrupted" });
     // The run ends in the dispatch's millisecond and must still be unread.
     const ended = yield* projections.getThreadShell(threadId);
     assert.ok(ended?.lastVisitedAt && ended.latestRunCompletedAt);

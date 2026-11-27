@@ -31,6 +31,7 @@ import {
   summarizeToolGroup,
   toolGroupSummaryKind,
   workEntriesViewedImagePaths,
+  systemNoticeLabel,
   type ToolGroupSummaryKind,
   type WorkLogPresentationEntry,
   type WorkLogToolLifecycleStatus,
@@ -293,6 +294,8 @@ export function workEntryRowLabel(
   resolve: MessageResolver = m,
 ): string {
   if (entry.itemType === "fork") return entry.label;
+  if (entry.structuredPayload?.type === "system_notice")
+    return systemNoticeLabel(entry.structuredPayload, resolve);
   if (expanded && entry.itemType === "reasoning")
     return entry.toolLifecycleStatus === "inProgress"
       ? resolve(msg("Thinking"))
@@ -638,7 +641,7 @@ function itemSummary(
   resolve: MessageResolver,
 ): string {
   if (item.type === "notification") return item.summary;
-  if (item.type === "system_notice") return item.message;
+  if (item.type === "system_notice") return systemNoticeLabel(item, resolve);
   if (item.type === "compaction") return contextCompactionLabel(item, resolve);
   const title =
     (item.type === "dynamic_tool"
@@ -745,8 +748,9 @@ function itemPreview(item: OrchestrationV2TurnItem, resolve: MessageResolver): s
           );
     case "run_interrupt_request":
     case "run_interrupt_result":
-    case "system_notice":
       return item.message || null;
+    case "system_notice":
+      return systemNoticeLabel(item, resolve) || null;
     case "error":
       return item.failure.message;
     case "compaction":

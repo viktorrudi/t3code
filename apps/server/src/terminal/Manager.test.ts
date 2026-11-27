@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_TERMINAL_ID,
+  EnvironmentId,
   ProjectId,
   ThreadId,
   TerminalCwdNotFoundError,
@@ -291,6 +292,7 @@ const createManager = (
 
       const manager = yield* TerminalManager.makeWithOptions({
         logsDir,
+        environmentId: EnvironmentId.make("terminal-environment"),
         historyLineLimit,
         ptyAdapter,
         ...(options.historyByteLimit !== undefined
@@ -2306,6 +2308,7 @@ it.layer(
           const spawnedShells: string[] = [];
           const manager = yield* TerminalManager.makeWithOptions({
             logsDir: path.join(baseDir, "logs"),
+            environmentId: EnvironmentId.make("terminal-environment"),
             ptyAdapter: {
               spawn: (input) => {
                 spawnedShells.push(input.shell);
@@ -2597,6 +2600,7 @@ it.layer(
           PORT: "5173",
           T3CODE_PORT: "3773",
           T3CODE_THREAD_ID: "server-thread",
+          T3CODE_ENVIRONMENT_ID: "server-environment",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
           TEST_TERMINAL_KEEP: "keep-me",
           TMUX: "/tmp/tmux-1000/default,1234,0",
@@ -2609,7 +2613,13 @@ it.layer(
       yield* manager.open(
         openInput({
           terminalId: "explicit",
-          env: { TMUX_PANE: "%9", T3CODE_THREAD_ID: "client-thread" },
+          env: {
+            TMUX_PANE: "%9",
+            T3CODE_THREAD_ID: "client-thread",
+            T3CODE_ENVIRONMENT_ID: "client-environment",
+            t3code_thread_id: "client-thread-alias",
+            t3code_environment_id: "client-environment-alias",
+          },
         }),
       );
       const spawnInput = ptyAdapter.spawnInputs[0];
@@ -2620,6 +2630,11 @@ it.layer(
       expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
       expect(spawnInput.env.T3CODE_THREAD_ID).toBe("thread-1");
       expect(ptyAdapter.spawnInputs[1]?.env.T3CODE_THREAD_ID).toBe("thread-1");
+      for (const spawn of ptyAdapter.spawnInputs) {
+        expect(spawn.env.T3CODE_ENVIRONMENT_ID).toBe("terminal-environment");
+        expect(spawn.env.t3code_thread_id).toBeUndefined();
+        expect(spawn.env.t3code_environment_id).toBeUndefined();
+      }
       expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
       expect(spawnInput.env.TMUX).toBeUndefined();

@@ -106,6 +106,8 @@ import { museItemStatus, museToolPresentation } from "./itemPresentation.ts";
 const MUSE_PROVIDER = ProviderDriverKind.make("muse");
 const isOpenSessionError = Schema.is(ProviderAdapter.ProviderAdapterOpenSessionError);
 const isProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
+const isMuseRequestRejected = (cause: unknown) =>
+  isProtocolError(cause) && cause.payload instanceof MspError;
 
 const MuseProviderCapabilitiesV2 = {
   runtimePolicy: { enforcement: "native" },
@@ -349,6 +351,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const commands = yield* Semaphore.make(1);
       const eventPermit = yield* Semaphore.make(1);
       let host: MuseSdkHost;
+      let awaitHostExit = Effect.never.pipe(Effect.asVoid);
       let hostEpoch = 0;
       let closed = false;
       let broken = false;
@@ -414,7 +417,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             // The enclosing operation owns the span for this inline handler.
             TimeoutError: Effect.fnUntraced(function* (cause) {
               yield* eventPermit.withPermits(1)(failHost(cause));
-              return yield* protocolError(`Muse ${method} timed out; its host was closed`, cause);
+              return yield* protocolError(`Muse ${method} timed out`, cause);
             }),
           }),
         );
@@ -1121,11 +1124,21 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
         yield* Deferred.succeed(turn.done, undefined);
       });
+      const closeAndVerifyHostExit = Effect.fn("MuseAdapter.closeAndVerifyHostExit")(function* () {
+        const target = host;
+        const verifiedExit = awaitHostExit;
+        yield* Effect.tryPromise({
+          try: () => target.close(),
+          catch: (cause) => new MuseSdkError({ operation: "close", cause }),
+        }).pipe(
+          Effect.ignore({ log: true, message: "Muse host close failed while waiting for exit" }),
+          Effect.forkIn(scope),
+        );
+        yield* verifiedExit;
+      });
       const failHost = Effect.fnUntraced(function* (cause: unknown) {
         if (closed || broken) return;
         hostEpoch++;
-        // Registration can replace the host while failure events are consumed.
-        const failed = host;
         const turn = active;
         broken = true;
         relaunchable = !turn;
@@ -1137,6 +1150,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           : failure instanceof Error
             ? failure.message
             : "Muse transport failed.";
+        yield* closeAndVerifyHostExit();
         if (turn) yield* finish(turn, "failed", detail, "broken");
         else {
           yield* updateThread({ status: "error" });
@@ -1144,10 +1158,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
         yield* settleObservedChildren("failed");
         if (turn) yield* Queue.fail(events, protocolError(detail, cause));
-        yield* Effect.tryPromise({
-          try: () => failed.close(),
-          catch: (cause) => new MuseSdkError({ operation: "close", cause }),
-        }).pipe(Effect.ignore, Effect.forkIn(scope));
       });
       const owns = (turn: ActiveTurn, turnId: string) =>
         turnId === turn.nativeId || turn.joined.has(turnId);
@@ -1839,6 +1849,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           { interruptible: true },
         ).pipe(Effect.provideService(Scope.Scope, scope));
         host = created;
+        awaitHostExit = Effect.raceFirst(
+          Deferred.await(processExited),
+          Effect.tryPromise({
+            try: () => created.exited,
+            catch: (cause) => new MuseSdkError({ operation: "exit", cause }),
+          }).pipe(Effect.catch(() => Effect.never)),
+        ).pipe(Effect.andThen(stopScope));
         created.connection.onNotification((notification) => {
           Queue.offerUnsafe(inbox, {
             type: "notification",
@@ -2140,6 +2157,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           compact,
         };
         yield* Effect.gen(function* () {
+          yield* ProviderAdapter.claimTurnDelivery(turnInput);
           thread = turnInput.providerThread;
           active = turn;
           yield* emit({
@@ -2175,7 +2193,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     ? (result.reason ?? "Muse has no context to compact.")
                     : `Muse returned an unsupported compaction status: ${result.status}`,
               ),
-              Effect.catch((error) => (broken ? Effect.fail(error) : Effect.succeed(error.detail))),
+              Effect.catchIf(isMuseRequestRejected, (error) => Effect.succeed(error.detail)),
             );
             if (declined !== undefined)
               yield* eventPermit.withPermits(1)(finish(turn, "failed", declined));
@@ -2218,6 +2236,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }).pipe(
           Effect.onError((cause) => {
             const error = Cause.squash(cause);
+            if (!isMuseRequestRejected(error)) return Effect.void;
             const detail = isProtocolError(error)
               ? error.detail
               : error instanceof Error
@@ -2227,6 +2246,17 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           }),
         );
       });
+      const startError = (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput, cause: unknown) =>
+        ProviderAdapter.isProviderAdapterTurnStartError(cause)
+          ? cause
+          : new ProviderAdapter.ProviderAdapterTurnStartError({
+              driver: MUSE_PROVIDER,
+              threadId: turnInput.threadId,
+              providerThreadId: turnInput.providerThread.id,
+              runId: turnInput.runId,
+              ...(isMuseRequestRejected(cause) ? { outcome: "not_delivered" as const } : {}),
+              cause,
+            });
       const snapshot = Effect.fnUntraced(function* (
         current: OrchestrationV2ProviderThread,
       ): Effect.fn.Return<
@@ -2277,6 +2307,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         driver: MUSE_PROVIDER,
         providerSessionId: input.providerSessionId,
         providerSession: session,
+        claimsTurnDelivery: true,
+        awaitVerifiedRuntimeExit: Effect.suspend(() => awaitHostExit),
         events: Stream.fromQueue(events),
         backgroundTasksEndWithProcess: true,
         // A running workflow or a held Muse turn keeps the host: idle release must wait.
@@ -2316,18 +2348,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         startTurn: (args) =>
           start(args).pipe(
             commands.withPermits(1),
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterTurnStartError({
-                  driver: MUSE_PROVIDER,
-                  threadId: args.threadId,
-                  providerThreadId: args.providerThread.id,
-                  runId: args.runId,
-                  cause,
-                }),
-            ),
+            Effect.mapError((cause) => startError(args, cause)),
           ),
-        compactThread: (args) => start(args, true).pipe(commands.withPermits(1)),
+        compactThread: (args) =>
+          start(args, true).pipe(
+            commands.withPermits(1),
+            Effect.mapError((cause) => startError(args, cause)),
+          ),
         steerTurn: Effect.fn("MuseAdapter.steerTurn")(
           function* (args) {
             const turn = active;
@@ -2383,10 +2410,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 Effect.gen(function* () {
                   if (active !== turn) return;
                   hostEpoch++;
-                  yield* Effect.tryPromise({
-                    try: () => host.close(),
-                    catch: (cause) => protocolError("Cannot stop Muse compaction", cause),
-                  }).pipe(Effect.onError(failHost));
+                  yield* closeAndVerifyHostExit();
                   broken = true;
                   wake = undefined;
                   yield* finish(turn, "interrupted", undefined, "broken");

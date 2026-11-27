@@ -65,6 +65,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ACP sign-in conf
           const restoredConfig = yield* makeAcpRegistryAuthenticationState(input);
           assert.isFalse(yield* restoredConfig.get);
         }
+        yield* (yield* makeAcpRegistryAuthenticationState(input)).set(true);
+        const withEnvironmentId = yield* makeAcpRegistryAuthenticationState({
+          ...input,
+          environment: [
+            ...input.environment,
+            { name: "T3CODE_ENVIRONMENT_ID", value: "environment-test", sensitive: false },
+          ],
+        });
+        assert.isTrue(yield* withEnvironmentId.get);
         for (const name of yield* fs.readDirectory(cacheDir)) {
           const contents = yield* fs.readFileString(`${cacheDir}/${name}`);
           assert.isFalse(contents.includes("test-only-token"));

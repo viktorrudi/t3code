@@ -929,6 +929,7 @@ describe("CodexAdapterV2 process exit", () => {
     { exit: "SIGKILL", active: false },
     { exit: "numeric", active: true },
     { exit: "SIGKILL", active: true },
+    { exit: "wire failure", active: true },
   ] as const)("retires the shared session after $exit (active turn: $active)", ({ exit, active }) =>
     Effect.gen(function* () {
       const scenario = `process-exit-${exit}-${active}`;
@@ -938,6 +939,7 @@ describe("CodexAdapterV2 process exit", () => {
       const emit = (frame: unknown) =>
         Queue.offer(input, new TextEncoder().encode(JSON.stringify(frame) + "\n"));
       const outputEnded = yield* Deferred.make<void>();
+      const nativeExited = yield* Deferred.make<void>();
       const turnStarted = yield* Deferred.make<void>();
       const turnCompleted = yield* Deferred.make<void>();
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
@@ -988,7 +990,9 @@ describe("CodexAdapterV2 process exit", () => {
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
-        clientFactory: { open: () => Effect.succeed(client) },
+        clientFactory: {
+          open: () => Effect.succeed({ ...client, awaitProcessExit: Deferred.await(nativeExited) }),
+        },
         digest: yield* Digest.Digest,
         fileSystem: yield* FileSystem.FileSystem,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
@@ -1053,11 +1057,15 @@ describe("CodexAdapterV2 process exit", () => {
         );
       }
 
-      yield* Queue.end(input);
+      if (exit === "wire failure") {
+        yield* Queue.offer(input, new TextEncoder().encode("{invalid\n"));
+      } else {
+        yield* Queue.end(input);
+      }
       // Output closes only after the protocol records the process termination.
       yield* Deferred.await(outputEnded);
       const rpcError = yield* client.request("thread/list", {}).pipe(Effect.flip);
-      assert.strictEqual(rpcError, terminationError);
+      if (exit !== "wire failure") assert.strictEqual(rpcError, terminationError);
       // Without the fix the stream never ends, so this waits until the project timeout.
       const readerExit = yield* Fiber.await(eventReader);
       // A failure, not a clean end, carries the Codex error into the session's lastError.
@@ -1066,6 +1074,19 @@ describe("CodexAdapterV2 process exit", () => {
           isProviderAdapterEventStreamError(Cause.squash(readerExit.cause)),
         "the session manager must receive process death so it can retire the shared process",
       );
+      if (exit === "wire failure") {
+        const error = Exit.isFailure(readerExit) ? Cause.squash(readerExit.cause) : undefined;
+        assert(isProviderAdapterEventStreamError(error));
+        assert.isUndefined(error.runtimeEnded);
+        assert.isDefined(runtime.awaitVerifiedRuntimeExit);
+        const verified = yield* (runtime.awaitVerifiedRuntimeExit ?? Effect.never).pipe(
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("1 millis");
+        assert.isUndefined(verified.pollUnsafe());
+        yield* Deferred.succeed(nativeExited, undefined);
+        yield* Fiber.join(verified);
+      }
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -1589,7 +1610,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CODEX_SETTINGS,
-        environment: {},
+        environment: { T3CODE_ENVIRONMENT_ID: "environment-codex" },
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
         ...(models ? { models } : {}),
@@ -2230,27 +2251,44 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
           },
         };
+        const retainedWork: CodexReplay.CodexAppServerReplayEntry = {
+          type: "emit_inbound",
+          label: "keep the original turn in the settled background roster",
+          frame: {
+            method: "item/started",
+            params: {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              startedAtMs: 1782622445000,
+              item: backgroundCommandItem("inProgress"),
+            },
+          },
+        };
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
             scenario: `reused-turn-${completionOrder}`,
             entries: [
               ...preamble,
+              ...(completionOrder === "before" ? [retainedWork, completion] : []),
               withReplayRequestId(preamble[5]!, 4),
-              ...(completionOrder === "before" ? [completion] : []),
               withReplayRequestId(preamble[6]!, 4),
-              ...(completionOrder === "after" ? [completion] : []),
-              ...retry.slice(5, 7).map((entry) => withReplayRequestId(entry, 5)),
-              {
-                type: "emit_inbound",
-                label: "retry completed",
-                frame: {
-                  method: "turn/completed",
-                  params: {
-                    threadId: nativeThreadId,
-                    turn: makeCodexReplayTurn({ id: "retry-turn", status: "completed" }),
-                  },
-                },
-              },
+              ...(completionOrder === "after"
+                ? [
+                    completion,
+                    ...retry.slice(5, 7).map((entry) => withReplayRequestId(entry, 5)),
+                    {
+                      type: "emit_inbound" as const,
+                      label: "retry completed",
+                      frame: {
+                        method: "turn/completed",
+                        params: {
+                          threadId: nativeThreadId,
+                          turn: makeCodexReplayTurn({ id: "retry-turn", status: "completed" }),
+                        },
+                      },
+                    },
+                  ]
+                : []),
             ],
           }),
         );
@@ -2262,6 +2300,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           text: "work",
         });
         yield* harness.runtime.startTurn(first);
+        if (completionOrder === "before") yield* harness.firstTerminal;
         const result = yield* harness.runtime
           .startTurn({
             ...first,
@@ -2275,14 +2314,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(result._tag, "Failure", "a different run must not adopt the original turn");
         if (result._tag !== "Failure") return;
         const failure = result.failure;
-        assert.equal(failure._tag, "ProviderAdapterTurnStartError");
+        assert(ProviderAdapter.isProviderAdapterTurnStartError(failure));
+        assert.equal(failure.outcome, completionOrder === "before" ? undefined : "not_delivered");
         assert.instanceOf(failure.cause, ProviderAdapter.ProviderAdapterProtocolError);
-        yield* harness.firstTerminal;
+        if (completionOrder === "after") yield* harness.firstTerminal;
         assert.deepEqual(
           harness.terminalEvents().map((event) => event.runOrdinal),
           [1],
         );
-        yield* harness.runtime.startTurn({
+        const retryStart = harness.runtime.startTurn({
           ...first,
           runId: RunId.make("retry"),
           attemptId: RunAttemptId.make("retry"),
@@ -2290,6 +2330,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           runOrdinal: 3,
           providerTurnOrdinal: 3,
         });
+        if (completionOrder === "before") {
+          const held = yield* retryStart.pipe(Effect.flip);
+          assert(ProviderAdapter.isProviderAdapterTurnStartError(held));
+          assert.equal(held.outcome, "not_delivered");
+          return;
+        }
+        yield* retryStart;
         yield* harness.awaitTerminal(2);
         assert.deepEqual(
           harness.terminalEvents().map((event) => [event.runOrdinal, event.status]),
@@ -2298,6 +2345,86 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             [3, "completed"],
           ],
         );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each(["malformed response", "RPC rejection", "process exit"] as const)(
+    "classifies a turn start with a %s",
+    (response) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "start-outcome-thread";
+        const nativeTurnId = "start-outcome-turn";
+        const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+        const entries: CodexReplay.CodexAppServerReplayEntry[] = preamble.slice(0, 6);
+        switch (response) {
+          case "malformed response": {
+            const started = preamble[7]!;
+            assert.equal(started.type, "emit_inbound");
+            if (started.type !== "emit_inbound") return;
+            entries.push(
+              { type: "emit_inbound", frame: { id: 3, result: { turn: { id: nativeTurnId } } } },
+              { ...started, afterMs: 1 },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            );
+            break;
+          }
+          case "RPC rejection":
+            entries.push({
+              type: "emit_inbound",
+              frame: { id: 3, error: { code: -32602, message: "Turn rejected" } },
+            });
+            break;
+          case "process exit":
+            entries.push({ type: "runtime_exit", status: "success" });
+            break;
+        }
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({ scenario: response, entries }),
+        );
+        const first = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("start-outcome-attempt"),
+          text: "work",
+        });
+        const result = yield* harness.runtime.startTurn(first).pipe(Effect.result);
+        assert.equal(result._tag, "Failure");
+        if (result._tag !== "Failure") return;
+        assert(ProviderAdapter.isProviderAdapterTurnStartError(result.failure));
+        assert.equal(
+          result.failure.outcome,
+          response === "RPC rejection"
+            ? "not_delivered"
+            : response === "process exit"
+              ? "runtime_ended"
+              : undefined,
+        );
+        if (response === "malformed response") {
+          assert.lengthOf(harness.terminalEvents(), 0);
+          yield* TestClock.adjust("1 millis");
+          yield* harness.firstTerminal;
+          assert.include(harness.terminalEvents()[0], { runOrdinal: 1, status: "completed" });
+        }
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -2489,7 +2616,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             mcp_optional_startup_grace_ms: 10_000,
             "features.concurrent_reasoning_summaries": true,
             "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
+            "shell_environment_policy.set.T3CODE_ENVIRONMENT_ID": "environment-codex",
             "mcp_servers.envprobe.env.T3CODE_THREAD_ID": `thread-${scenario}`,
+            "mcp_servers.envprobe.env.T3CODE_ENVIRONMENT_ID": "environment-codex",
             "mcp_servers.t3-code": {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,

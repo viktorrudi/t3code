@@ -1039,11 +1039,12 @@ function acpMcpContext(
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
     processEnvironment: {
-      // The thread id every process the agent starts inherits, so a tool run
+      // The thread and environment ids every process the agent starts inherits, so a tool run
       // from its shell can find its T3 thread. Claude and Codex sessions set
       // the same variable (PortScanner.AGENT_THREAD_ENV; a string literal here
       // because this package cannot reach apps/server).
       T3CODE_THREAD_ID: session.threadId,
+      T3CODE_ENVIRONMENT_ID: session.environmentId,
       T3_ACP_MCP_ENDPOINT: session.endpoint,
       T3_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
       T3_ACP_MCP_NODE: self.command,
@@ -2696,6 +2697,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? notePromptProgress()
               : Effect.void,
           );
+        const settleNativeWorkAfterExit = Effect.fnUntraced(function* () {
+          agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
+          for (const child of nativeChildren.values()) {
+            if (child.status !== "running") continue;
+            child.status = "failed";
+            child.result = null;
+          }
+          for (const child of nativeChildren.values()) {
+            if (
+              child.subagent === undefined ||
+              acpSubagentStatusIsTerminal(child.subagent.task.status)
+            )
+              continue;
+            child.result = null;
+            yield* publishNativeChildStatus(child, "failed");
+          }
+          agentRequests.clear();
+          yield* Ref.set(wakeBuffer, []);
+          yield* Ref.set(continuationRequested, false);
+        });
         const handleRuntimeTerminationAtGeneration = (runtimeGeneration: number) =>
           runRuntimeCallbackAtGeneration(
             runtimeGeneration,
@@ -2726,24 +2747,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 );
                 return;
               }
-              agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
-              for (const child of nativeChildren.values()) {
-                if (child.status !== "running") continue;
-                child.status = "failed";
-                child.result = null;
-              }
-              for (const child of nativeChildren.values()) {
-                if (
-                  child.subagent === undefined ||
-                  acpSubagentStatusIsTerminal(child.subagent.task.status)
-                )
-                  continue;
-                child.result = null;
-                yield* publishNativeChildStatus(child, "failed");
-              }
-              agentRequests.clear();
-              yield* Ref.set(wakeBuffer, []);
-              yield* Ref.set(continuationRequested, false);
+              yield* settleNativeWorkAfterExit();
               yield* cancelPendingRuntimeRequests();
               const context = yield* Ref.get(activeTurn);
               if (context !== null) {
@@ -2758,13 +2762,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             }),
           ).pipe(Effect.asVoid);
+        const observeRuntimeTermination = (generation: number) =>
+          runRuntimeCallbackAtGeneration(
+            generation,
+            Effect.gen(function* () {
+              yield* Ref.set(runtimeRestartRequired, true);
+              yield* (runtime.awaitVerifiedExit ?? Effect.never).pipe(
+                Effect.andThen(handleRuntimeTerminationAtGeneration(generation)),
+                Effect.forkIn(sessionScope),
+              );
+            }),
+          ).pipe(Effect.asVoid);
         const makeRuntimeInput = (
           runtimeGeneration: number,
           agentRequests: Set<string>,
           mcpContext: AcpMcpContext,
           resumeSessionId?: string,
           onTermination: AcpAdapterV2RuntimeInput["onTermination"] = () =>
-            handleRuntimeTerminationAtGeneration(runtimeGeneration),
+            observeRuntimeTermination(runtimeGeneration),
         ): AcpAdapterV2RuntimeInput => {
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
@@ -7735,7 +7750,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               candidateLifecycle,
               (current): readonly [Effect.Effect<void>, CandidateLifecycle] => {
                 if (current._tag === "Committed") {
-                  return [handleRuntimeTerminationAtGeneration(replacementGeneration), current];
+                  return [observeRuntimeTermination(replacementGeneration), current];
                 }
                 return [
                   Effect.void,
@@ -8724,10 +8739,42 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return false;
         });
 
-        /**
-         * Holds the transition permit from the deadline check through process teardown,
-         * so Stop and the next turn see either a running prompt or a replaced runtime.
-         */
+        let retiringPrompt: ActiveAcpTurn | undefined;
+        const quarantinePrompt = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          generation: number,
+        ) {
+          const retirement = {
+            closingScope: runtimeScope,
+            verifiedExit: runtime.awaitVerifiedExit,
+          };
+          retiringPrompt = context;
+          openAgentRequests.clear();
+          yield* quarantineNativeTransportAtGeneration(generation);
+          yield* advanceRuntimeCallbackGeneration;
+          yield* Ref.set(runtimeRestartRequired, true);
+          yield* cancelPendingRuntimeRequests();
+          return retirement;
+        });
+
+        const finishRetiredPrompt = Effect.fn("AcpAdapterV2.finishRetiredPrompt")(function* (
+          context: ActiveAcpTurn,
+          failure: NonNullable<Parameters<typeof finalizeTurn>[2]>,
+          { closingScope, verifiedExit }: Effect.Success<ReturnType<typeof quarantinePrompt>>,
+        ) {
+          if (closingScope !== undefined) yield* Scope.close(closingScope, Exit.void);
+          yield* verifiedExit ?? Effect.never;
+          yield* runtimeCallbackPermit.withPermit(
+            Effect.gen(function* () {
+              const status = context.interrupted ? "interrupted" : "failed";
+              if (followsAgentWorkState) yield* settleNativeWorkAfterExit();
+              if (status === "failed") yield* terminalizeOpenForegroundTools(context, status);
+              yield* finalizeTurn(context, status, context.interrupted ? undefined : failure);
+              retiringPrompt = undefined;
+            }),
+          );
+        });
+
         const retireInactivePrompt = Effect.fn("AcpAdapterV2.retireInactivePrompt")(function* (
           context: ActiveAcpTurn,
           generation: number,
@@ -8746,36 +8793,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 return "rearm" as const;
               }
               context.inactivityWatchdog = undefined;
-              openAgentRequests.clear();
-              yield* quarantineNativeTransportAtGeneration(generation);
-              yield* advanceRuntimeCallbackGeneration;
-              yield* Ref.set(runtimeRestartRequired, true);
-              yield* cancelPendingRuntimeRequests();
-              yield* terminalizeOpenForegroundTools(context, "failed");
-              const minutes = Math.max(1, Math.round(timeoutMillis / 60_000));
-              yield* finalizeTurn(
-                context,
-                "failed",
-                makeProviderFailure({
-                  class: "provider_error",
-                  message: `${flavor.runtimeHarness ?? driver} sent nothing for ${minutes} ${minutes === 1 ? "minute" : "minutes"}, so T3 Code stopped the turn and restarted the agent. Send a message to continue.`,
-                }),
-              );
-              return "retired" as const;
+              return yield* quarantinePrompt(context, generation);
             }),
           );
-          if (Option.isNone(retired) || retired.value !== "retired") {
-            return Option.getOrElse(retired, () => "done" as const);
-          }
+          const retirement = Option.getOrElse(retired, () => "done" as const);
+          if (typeof retirement === "string") return retirement;
           yield* Effect.logWarning("orchestration-v2.acp-prompt-inactive", {
             driver,
             providerSessionId: input.providerSessionId,
             providerTurnId: context.providerTurnId,
             timeoutMillis,
           });
-          if (runtimeScope !== undefined) {
-            yield* Scope.close(runtimeScope, Exit.void).pipe(Effect.ignore);
-          }
+          const minutes = Math.max(1, Math.round(timeoutMillis / 60_000));
+          yield* finishRetiredPrompt(
+            context,
+            makeProviderFailure({
+              class: "provider_error",
+              message: `${flavor.runtimeHarness ?? driver} sent nothing for ${minutes} ${minutes === 1 ? "minute" : "minutes"}, so T3 Code stopped the turn and restarted the agent. Send a message to continue.`,
+            }),
+            retirement,
+          ).pipe(Effect.forkIn(sessionScope));
           return "retired" as const;
         });
 
@@ -9118,13 +9155,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       error.success._tag === "AcpRequestError" &&
                       error.success.code === -32800);
                   const failure = Cause.squash(cause);
+                  const agentAnswered =
+                    Result.isSuccess(error) && error.success._tag === "AcpRequestError";
+                  const providerFailure =
+                    (agentAnswered ? flavor.promptFailure?.(failure) : undefined) ??
+                    makeProviderFailure({
+                      cause: failure,
+                      class: agentAnswered ? "provider_error" : "transport_error",
+                    });
                   if (!interrupted && flavor.restartRuntimeAfterPromptError?.(failure) === true) {
                     yield* Ref.set(runtimeRestartRequired, true);
                   }
-                  // An agent that answered with an error may still finish tools it started,
-                  // never pending ones; any other failure means its process or pipe is gone.
-                  const agentAnswered =
-                    Result.isSuccess(error) && error.success._tag === "AcpRequestError";
+                  if (!interrupted && !agentAnswered) {
+                    const retirement = yield* quarantinePrompt(context, settle.generation);
+                    return { providerFailure, retirement };
+                  }
                   if (!interrupted) {
                     yield* terminalizeOpenForegroundTools(context, "failed", {
                       unstartedOnly: agentAnswered,
@@ -9133,11 +9178,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   yield* finalizeTurn(
                     context,
                     interrupted ? "interrupted" : "failed",
-                    flavor.promptFailure?.(failure) ??
-                      makeProviderFailure({
-                        cause: failure,
-                        class: "provider_error",
-                      }),
+                    providerFailure,
+                    { childTurnsContinue: !interrupted && hasSurvivingBackgroundWork(context) },
                   ).pipe(
                     Effect.andThen(
                       Effect.logWarning("orchestration-v2.acp-prompt-failed", {
@@ -9150,7 +9192,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     ),
                   );
                 }),
-              ).pipe(Effect.asVoid),
+              ).pipe(
+                Effect.flatMap((retired) => {
+                  const result = Option.getOrUndefined(retired);
+                  return result === undefined
+                    ? Effect.void
+                    : finishRetiredPrompt(context, result.providerFailure, result.retirement);
+                }),
+              ),
             ),
           );
         };
@@ -9349,6 +9398,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }
               }
             }
+            yield* ProviderAdapter.claimTurnDelivery(turnInput);
             yield* Ref.set(activeTurn, context);
             yield* Ref.set(stoppedRunQuarantine, false);
             const runningTurn = providerTurnPayload(context, "running", null);
@@ -9537,6 +9587,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const startTurn = Effect.fn("AcpAdapterV2.startTurn.transition")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
         ) {
+          const retiring = retiringPrompt;
+          if (retiring !== undefined) yield* Deferred.await(retiring.completed);
           return yield* runtimeTransitionPermit.withPermit(startTurnUnlocked(turnInput));
         });
 
@@ -9558,6 +9610,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const context = yield* Ref.get(activeTurn);
               if (
                 context === null ||
+                context === retiringPrompt ||
                 context.finalized ||
                 context.interrupted ||
                 context.providerTurnId !== turnInput.providerTurnId
@@ -9720,6 +9773,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           },
           canResumeAfterRestart: canLoadSession || canResumeSession,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          awaitVerifiedRuntimeExit: Effect.suspend(() => runtime.awaitVerifiedExit ?? Effect.never),
           ...(flavor.getModelContextWindow === undefined
             ? {}
             : {
@@ -9903,6 +9957,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ),
               ),
           ),
+          claimsTurnDelivery: true,
           startTurn,
           ...(compactsContext
             ? {
@@ -9934,6 +9989,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const context = yield* Ref.get(activeTurn);
               if (
                 context === null ||
+                context === retiringPrompt ||
                 context.finalized ||
                 context.providerTurnId !== turnInput.providerTurnId
               ) {
@@ -10026,6 +10082,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const transitionFiber = yield* Effect.gen(function* () {
                     const transition = yield* Effect.gen(function* () {
                       const interruptContext = yield* Ref.get(activeTurn);
+                      if (
+                        interruptContext !== null &&
+                        interruptContext === retiringPrompt &&
+                        interruptContext.providerTurnId === turnInput.providerTurnId
+                      ) {
+                        interruptContext.interrupted = true;
+                        return undefined;
+                      }
                       if (
                         followsAgentWorkState &&
                         turnInput.requestRuntimeRestart === true &&
@@ -10251,14 +10315,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       }
                       // A settled soft interrupt keeps background subagents, and with them their MCP calls.
                       yield* cancelPendingRuntimeRequests({ stopMcpCalls: !settledSoftInterrupt });
-                      // Finalize before killing so projection catches up and concurrent interrupts see activeTurn cleared.
                       if (
-                        (hardRestart || context.promptSettled || settledSoftInterrupt) &&
+                        !hardRestart &&
+                        (context.promptSettled || settledSoftInterrupt) &&
                         !context.finalized
                       ) {
                         yield* finalizeTurn(context, "interrupted");
                       }
                       if (hardRestart) {
+                        const closingScope = runtimeScope;
+                        const verifiedExit = runtime.awaitVerifiedExit;
                         if (runtime.terminateProcessGroup === undefined) {
                           return yield* poisonTeardown(
                             "ACP runtime does not expose its required process-group teardown; the session is poisoned",
@@ -10273,6 +10339,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             Cause.squash(teardownExit.cause),
                           ).pipe(Effect.flatMap(Effect.fail));
                         }
+                        if (closingScope !== undefined) yield* Scope.close(closingScope, Exit.void);
+                        if (verifiedExit === undefined) {
+                          return yield* poisonTeardown(
+                            "ACP runtime does not expose exit verification; the session is poisoned",
+                          ).pipe(Effect.flatMap(Effect.fail));
+                        }
+                        yield* verifiedExit;
+                        yield* runtimeCallbackPermit.withPermit(
+                          Effect.gen(function* () {
+                            if (followsAgentWorkState) yield* settleNativeWorkAfterExit();
+                            if (!context.finalized) yield* finalizeTurn(context, "interrupted");
+                          }),
+                        );
                         yield* Ref.set(runtimeRestartRequired, true);
                         yield* Ref.set(runtimeTeardownState, { _tag: "Idle" });
                         yield* Deferred.succeed(teardownBarrier!, undefined).pipe(Effect.ignore);

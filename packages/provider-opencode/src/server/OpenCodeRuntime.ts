@@ -91,6 +91,7 @@ export interface OpenCodeServerProcess {
   readonly version: string;
   readonly isRunning: Effect.Effect<boolean>;
   readonly exitCode: Effect.Effect<number, never>;
+  readonly verifiedExitCode?: Effect.Effect<number>;
 }
 
 export interface OpenCodeServerConnection {
@@ -98,6 +99,7 @@ export interface OpenCodeServerConnection {
   readonly serverPassword?: string;
   readonly version: string;
   readonly exitCode: Effect.Effect<number, never> | null;
+  readonly verifiedExitCode?: Effect.Effect<number>;
   readonly external: boolean;
 }
 
@@ -781,6 +783,10 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         Effect.map(Number),
         Effect.orElseSucceed(() => 0),
       ),
+      verifiedExitCode: child.exitCode.pipe(
+        Effect.map(Number),
+        Effect.catch(() => Effect.never),
+      ),
     } satisfies OpenCodeServerProcess;
   });
 
@@ -847,6 +853,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
         version: server.version,
         exitCode: server.exitCode,
+        ...(server.verifiedExitCode === undefined
+          ? {}
+          : { verifiedExitCode: server.verifiedExitCode }),
         external: false,
       })),
     );

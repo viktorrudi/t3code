@@ -34,6 +34,7 @@ it.layer(NodeServices.layer)("replaceOutdatedService", (it) => {
           PATH: binDirectory,
           OPENCODE_CONFIG_DIR: home,
           ELECTRON_RUN_AS_NODE: "1",
+          T3CODE_ENVIRONMENT_ID: "environment-test",
         };
         yield* fileSystem.writeFileString(
           path.join(home, "service.json"),
@@ -89,7 +90,12 @@ it.layer(NodeServices.layer)("replaceOutdatedService", (it) => {
         expect(service.ensure).toHaveBeenCalledWith({
           file,
           command: [path.join(binDirectory, "opencode"), "serve", "--service"],
-          env: { ...environment, PATH: "/nowhere", ELECTRON_RUN_AS_NODE: undefined },
+          env: {
+            HOME: home,
+            OPENCODE_CONFIG_DIR: home,
+            PATH: "/nowhere",
+            ELECTRON_RUN_AS_NODE: undefined,
+          },
         });
       }),
   );

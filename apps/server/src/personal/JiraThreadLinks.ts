@@ -23,6 +23,7 @@ import * as ServerConfig from "../config.ts";
 import * as IssueService from "../issue/IssueService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { eligibleJiraThread, linkedJiraThreads, linkedPullRequests } from "./JiraTicketWork.ts";
 import { JIRA_HOST, JIRA_TRACKER, jiraProject, ticketRoot } from "./SensoneoJira.ts";
 import * as ThreadTickets from "./ThreadTickets.ts";
@@ -47,6 +48,7 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projects = yield* ProjectService.ProjectService;
+  const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const tickets = yield* ThreadTickets.ThreadTickets;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -183,6 +185,7 @@ const make = Effect.gen(function* () {
       return { threads: [], jiraPullRequests: [] };
     }
     const threads = yield* linkedJiraThreads(key.key).pipe(
+      Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
       Effect.provideService(Orchestrator.OrchestratorV2, orchestrator),
       Effect.provideService(ProjectService.ProjectService, projects),
       Effect.provideService(FileSystem.FileSystem, fs),

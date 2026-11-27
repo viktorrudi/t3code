@@ -690,7 +690,7 @@ const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
   "SkillNotFoundError",
 ]);
 
-export const OPENCODE_2_STILL_STOPPING =
+const OPENCODE_2_STILL_STOPPING =
   "OpenCode is still stopping the previous turn. Send the message again in a moment.";
 const REQUEST_REPLY_TIMEOUT = "10 seconds";
 
@@ -885,7 +885,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       updatedAt: now,
       lastError: null,
     };
-    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
+    const events = yield* Queue.unbounded<
+      ProviderAdapter.ProviderAdapterV2Event,
+      Cause.Done | ProviderAdapter.ProviderAdapterEventStreamError
+    >();
     const threads = new Map<string, ThreadState>();
     const childOwners = new Map<string, ThreadState>();
     const announced = new Map<string, EventOf<"session.created">["data"]>();
@@ -3570,22 +3573,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const failAll = Effect.fnUntraced(function* (message: string) {
       streamFailure = message;
       yield* Deferred.succeed(reconnected, undefined);
-      for (const state of threads.values()) {
-        const failure = makeProviderFailure({ message, class: "transport_error" });
-        yield* finishTurn(state, { status: "failed", failure }, "broken");
-      }
-      for (const state of threads.values()) {
-        for (const call of runningCalls(state)) yield* settleCall(call, "failed");
-        for (const [jobID, job] of state.imageJobs) {
-          if (job.status !== "running") continue;
-          yield* imageReport(state, { text: message, metadata: { jobID, state: "error" } });
-        }
-        for (const wake of state.wakes.splice(0)) wake.dropped = true;
-        state.reports.clear();
-        yield* syncRosterAncestors(state);
-      }
       yield* setSessionStatus("error", message);
-      yield* Queue.end(events);
+      yield* Queue.fail(
+        events,
+        new ProviderAdapter.ProviderAdapterEventStreamError({
+          driver,
+          providerSessionId: input.providerSessionId,
+          cause: message,
+        }),
+      );
     });
     const backfill = Effect.fnUntraced(function* (sessionId: string, state: ThreadState) {
       const turn = state.active;
@@ -4677,11 +4673,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn: ActiveTurn,
     ) {
       const sessionID = Session.ID.make(sessionId);
-      const sending = () => {
+      const sending = Effect.fnUntraced(function* () {
         if (state.active !== turn || turn.interrupted) return false;
+        yield* ProviderAdapter.claimTurnDelivery(turnInput);
         turn.unsent = false;
         return true;
-      };
+      });
       const finishControl = lock.withPermit(
         Effect.suspend(() =>
           state.active === turn ? finishTurn(state, { status: "completed" }) : Effect.void,
@@ -4692,12 +4689,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const id = turnPromptId(sessionId, turnInput.attemptId);
       const goalCommand = supportsNativeGoals() ? parseGoalCommand(turnInput.message) : null;
       if (goalCommand?.type === "show") {
-        if (!sending()) return;
+        if (!(yield* sending())) return;
         yield* readGoal(state);
         return yield* finishControl;
       }
       if (bare && text === "/compact") {
-        if (!sending()) return;
+        if (!(yield* sending())) return;
         return yield* client.session.compact({ sessionID, id }).pipe(Effect.asVoid);
       }
       const location = { directory: turnInput.runtimePolicy.cwd ?? host.paths.cwd };
@@ -4712,7 +4709,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // session.command neither accepts nor returns our ID; record the preceding history boundary.
           const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
           yield* markBefore(sessionId, newest.data[0]?.id ?? null);
-          if (!sending()) return;
+          if (!(yield* sending())) return;
           if (goalCommand?.type === "pause" || goalCommand?.type === "clear") {
             // OpenCode rejects pausing or clearing a missing goal; Codex treats that as a no-op.
             yield* client.session.command({ sessionID, ...command }).pipe(
@@ -4731,7 +4728,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
       const files = yield* promptFiles(turnInput.message.attachments);
       const messageText = turnInput.resume ? "" : yield* promptText(turnInput);
-      if (!sending()) return;
+      if (!(yield* sending())) return;
       return yield* client.session
         .prompt({
           sessionID,
@@ -4748,6 +4745,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
       instanceId,
       driver,
+      claimsTurnDelivery: true,
       providerSessionId: input.providerSessionId,
       get providerSession() {
         return session;
@@ -4927,7 +4925,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   reason: "previous_turn_active",
                 });
               }
-              if (isContinuation(turnInput)) return yield* runWake(state, turnInput);
+              if (isContinuation(turnInput)) {
+                yield* ProviderAdapter.claimTurnDelivery(turnInput);
+                return yield* runWake(state, turnInput);
+              }
               const afterUnsettled = state.unsettled;
               let stillStopping = false;
               if (state.unsettled) {
@@ -5023,13 +5024,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             Effect.tapError((cause) =>
               state.active === turn
                 ? Effect.gen(function* () {
-                    if (!CLEAR_PROMPT_REJECTIONS.has(cause._tag)) markUnsettled(state);
+                    if (!turn.unsent && !CLEAR_PROMPT_REJECTIONS.has(cause._tag)) {
+                      if (!busy.has(sessionId)) turn.awaitingStart = true;
+                      return;
+                    }
                     yield* finishTurn(state, {
                       status: "failed",
                       failure: makeProviderFailure({ cause, class: "provider_error" }),
                     });
                   })
                 : Effect.void,
+            ),
+            Effect.onInterrupt(() =>
+              lock.withPermit(
+                Effect.suspend(() =>
+                  state.active === turn && turn.unsent
+                    ? finishTurn(state, { status: "interrupted" })
+                    : Effect.void,
+                ),
+              ),
             ),
           );
         },
@@ -5043,6 +5056,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                     threadId: turnInput.threadId,
                     providerThreadId: turnInput.providerThread.id,
                     runId: turnInput.runId,
+                    ...(CLEAR_PROMPT_REJECTIONS.has(cause._tag)
+                      ? { outcome: "not_delivered" as const }
+                      : {}),
                     cause,
                   }),
             ),

@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   SecretProviderId,
@@ -26,6 +27,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "../provider/ProviderInstanceRegistryMutator.ts";
@@ -110,7 +112,9 @@ const setup = Effect.fn("SecretCheckTest.setup")(function* (
       Effect.sync(() => {
         created.push({
           instanceId: input.instanceId,
-          secrets: input.environment.map((variable) => variable.value),
+          secrets: input.environment
+            .filter((variable) => variable.name !== ServerEnvironment.ENVIRONMENT_ID_ENV)
+            .map((variable) => variable.value),
         });
         createdConfigs.push(input.config);
         const snapshot = providerSnapshot(input.instanceId);
@@ -165,7 +169,12 @@ const setup = Effect.fn("SecretCheckTest.setup")(function* (
       [dependent]: instanceConfig(dependentReads, options.dependentConfig),
       [unrelated]: instanceConfig([other]),
     },
-  }).pipe(Effect.provide(resolverContext));
+  }).pipe(
+    Effect.provide(resolverContext),
+    Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+      getEnvironmentId: Effect.succeed(EnvironmentId.make("secret-check-environment")),
+    }),
+  );
   // Secrets are read after startup, so wait for the change that applies them.
   const changes = yield* registry.subscribeChanges;
   yield* PubSub.take(changes);

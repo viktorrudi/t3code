@@ -870,6 +870,8 @@
   "2605da0149cd15f1": "正在压缩上下文",
   "39a82db18ca50c21": "上下文已压缩：{before} → {after} token",
   "885ae08a2160a158": "上下文已压缩",
+  "db986d42cd701c4c": "技能更新已完成",
+  "d217a938cb47e53f": "正在等待技能更新完成后再开始。",
   "3ab6b281a0991766": "{count, plural, =1 {已检查关联的 pull request } other {已检查关联的 pull request {count} 次}}",
   "857e92a89b6b6257": "{count, plural, other {已读取 {count} 个文件}}",
   "466ac7fcdb97bb76": "{count, plural, other {已更改 {count} 个文件}}",

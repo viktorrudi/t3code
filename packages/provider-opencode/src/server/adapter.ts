@@ -963,15 +963,15 @@ const OPENCODE_UNSENT_REQUEST_CODES = new Set([
   "ENETUNREACH",
   "UND_ERR_CONNECT_TIMEOUT",
 ]);
+const OPENCODE_PROMPT_REJECTION_STATUSES = new Set([400, 401, 403, 404, 409, 422]);
 
-// Only an HTTP error reply (the SDK puts its status on `cause`) or an unsent request
-// proves OpenCode did not take a prompt; a reset or timeout after sending is ambiguous.
+// A gateway error can arrive after the upstream accepted the prompt.
 function isOpenCodePromptRejected(error: unknown): boolean {
   const cause = OpenCodeRuntime.isOpenCodeRuntimeError(error) ? error.cause : error;
   if (!(cause instanceof Error)) return false;
   const reason = cause.cause as { readonly status?: unknown; readonly code?: unknown } | undefined;
   return (
-    typeof reason?.status === "number" ||
+    (typeof reason?.status === "number" && OPENCODE_PROMPT_REJECTION_STATUSES.has(reason.status)) ||
     (typeof reason?.code === "string" && OPENCODE_UNSENT_REQUEST_CODES.has(reason.code))
   );
 }
@@ -1112,8 +1112,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           updatedAt: now,
           lastError: null,
         };
-        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
+        const events = yield* Queue.unbounded<
+          ProviderAdapter.ProviderAdapterV2Event,
+          Cause.Done | ProviderAdapter.ProviderAdapterEventStreamError
+        >();
         let nativeStreamFailure: OrchestrationV2ProviderFailure | null = null;
+        let nativeEventStreamLost = false;
         const threads = new Map<string, OpenCodeThreadState>();
         const variantCache: OpenCodeRuntime.OpenCodeVariantCache = new Map();
         const commandReceipts = new Map<string, Deferred.Deferred<void>>();
@@ -2259,7 +2263,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           // Once claimed, terminal publication must finish even if the routing budget expires.
           return yield* Effect.uninterruptibleMask((restore) =>
             Effect.gen(function* () {
-              if (turn.finalized) return;
+              if (turn.finalized || nativeEventStreamLost) return;
               if (nativeStreamFailure !== null) {
                 status = "failed";
                 terminal = { failure: nativeStreamFailure, threadDisposition: "broken" };
@@ -2462,6 +2466,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ),
             Effect.forkIn(scope),
           );
+        });
+        const preserveUncertainAdmission = Effect.fnUntraced(function* (
+          state: OpenCodeThreadState,
+          turn: ActiveOpenCodeTurn,
+        ) {
+          if (!turnIsLive(state, turn)) return;
+          turn.admissionUncertain = true;
+          if (advanceOpenCodePromptAdmission(turn, "accepted") === "reconcile-idle") {
+            yield* reconcilePromptAdmission(state, turn);
+          }
         });
 
         const createChildTurn = Effect.fnUntraced(function* (
@@ -3249,29 +3263,31 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               const detail = Exit.isSuccess(exit)
                 ? "OpenCode event stream ended unexpectedly."
                 : OpenCodeRuntime.openCodeRuntimeErrorDetail(Cause.squash(exit.cause));
+              nativeEventStreamLost = true;
               nativeStreamFailure = makeProviderFailure({
                 message: detail,
                 class: "transport_error",
               });
-              yield* updateProviderSession("error", detail);
               for (const state of threads.values()) {
-                // No continuation can admit a wake this stream will never finish.
-                state.wake = null;
-                if (state.activeTurn !== null)
-                  yield* finalizeTurn(state, state.activeTurn, "failed", {
-                    failure: makeProviderFailure({ message: detail, class: "transport_error" }),
-                    threadDisposition: "broken",
-                  });
-                yield* settleLaunchedSubagents(state.nativeSessionId, "failed");
+                const wake = state.activeTurn?.priorWakeSettled;
+                if (wake != null) yield* Deferred.succeed(wake, undefined);
               }
-              yield* Queue.end(events);
+              yield* updateProviderSession("error", detail);
+              yield* Queue.fail(
+                events,
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver: OPENCODE_PROVIDER,
+                  providerSessionId: input.providerSessionId,
+                  cause: detail,
+                }),
+              );
             }),
           ),
           Effect.forkIn(scope),
         );
 
-        if (!connection.external && connection.exitCode !== null) {
-          yield* connection.exitCode.pipe(
+        if (connection.verifiedExitCode !== undefined) {
+          yield* connection.verifiedExitCode.pipe(
             Effect.flatMap((code) =>
               abortController.signal.aborted
                 ? Effect.void
@@ -3577,9 +3593,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               turn.finalized ||
               turn.admissionGeneration !== generation
                 ? Effect.void
-                : finalizeTurn(state, turn, "failed", {
-                    failure: makeProviderFailure({ cause, class: "provider_error" }),
-                  }),
+                : isOpenCodePromptRejected(cause)
+                  ? finalizeTurn(state, turn, "failed", {
+                      failure: makeProviderFailure({ cause, class: "provider_error" }),
+                    })
+                  : preserveUncertainAdmission(state, turn),
             ),
             Effect.ensuring(
               Effect.sync(() => {
@@ -3600,9 +3618,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   cause,
                 });
                 abortController.abort();
-                return finalizeTurn(state, turn, "failed", {
-                  failure: makeProviderFailure({ cause: error, class: "provider_error" }),
-                }).pipe(Effect.andThen(Effect.fail(error)));
+                return preserveUncertainAdmission(state, turn).pipe(
+                  Effect.andThen(
+                    Effect.suspend(() =>
+                      turnIsLive(state, turn)
+                        ? abortRootSession(state).pipe(Effect.ignore({ log: true }))
+                        : Effect.void,
+                    ),
+                  ),
+                  Effect.andThen(Effect.fail(error)),
+                );
               },
             }),
           );
@@ -3613,7 +3638,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           driver: OPENCODE_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: sessionEntity,
+          claimsTurnDelivery: true,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          ...(connection.verifiedExitCode === undefined
+            ? {}
+            : { awaitVerifiedRuntimeExit: Effect.asVoid(connection.verifiedExitCode) }),
           hasPendingBackgroundWork: Effect.sync(
             () =>
               busySessionIds.size > 0 ||
@@ -3837,6 +3866,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                         });
                       }
                       const wake = state.wake;
+                      yield* ProviderAdapter.claimTurnDelivery(turnInput);
                       if (!continuation) turn.priorWakeSettled = wake?.settled ?? null;
                       state.wake = null;
                       state.appThread = turnInput.appThread;
@@ -3900,6 +3930,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               if (turn.priorWakeSettled !== null) {
                 yield* Deferred.await(turn.priorWakeSettled);
                 turn.priorWakeSettled = null;
+                if (nativeEventStreamLost) {
+                  yield* Deferred.succeed(admissionSettled, undefined);
+                  return yield* protocolError(
+                    "OpenCode lost the event stream before sending the prompt.",
+                  );
+                }
                 if (!turnIsLive(state, turn)) {
                   yield* Deferred.succeed(admissionSettled, undefined);
                   return;
@@ -3927,9 +3963,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                     finalizeTurn(state, turn, turn.interrupted ? "interrupted" : "completed"),
                   ),
                   Effect.tapError((cause) =>
-                    finalizeTurn(state, turn, turn.interrupted ? "interrupted" : "failed", {
-                      failure: makeProviderFailure({ cause, class: "provider_error" }),
-                    }),
+                    isOpenCodePromptRejected(cause)
+                      ? finalizeTurn(state, turn, turn.interrupted ? "interrupted" : "failed", {
+                          failure: makeProviderFailure({ cause, class: "provider_error" }),
+                        })
+                      : preserveUncertainAdmission(state, turn),
                   ),
                   Effect.ensuring(Deferred.succeed(admissionSettled, undefined)),
                 );
@@ -3951,9 +3989,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 Effect.tapError((cause) =>
                   admissionAbortController!.signal.aborted
                     ? Effect.void
-                    : finalizeTurn(state, turn, "failed", {
-                        failure: makeProviderFailure({ cause, class: "provider_error" }),
-                      }),
+                    : isOpenCodePromptRejected(cause)
+                      ? finalizeTurn(state, turn, "failed", {
+                          failure: makeProviderFailure({ cause, class: "provider_error" }),
+                        })
+                      : preserveUncertainAdmission(state, turn),
                 ),
                 Effect.catch((cause) =>
                   admissionAbortController!.signal.aborted ? Effect.void : Effect.fail(cause),
@@ -3995,6 +4035,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                         threadId: turnInput.threadId,
                         providerThreadId: turnInput.providerThread.id,
                         runId: turnInput.runId,
+                        ...(isOpenCodePromptRejected(cause)
+                          ? { outcome: "not_delivered" as const }
+                          : {}),
                         cause,
                       }),
                   ),

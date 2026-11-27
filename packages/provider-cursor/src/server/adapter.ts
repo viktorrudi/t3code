@@ -32,6 +32,7 @@ import {
   type ServerProviderSkill,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -2770,6 +2771,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               ...(yield* resolveWorkspaceMcpServers(turnInput.runtimePolicy.cwd)),
               ...mcpServers,
             };
+            yield* ProviderAdapter.claimTurnDelivery(turnInput);
             const sdkRun = yield* agent.session
               .send({
                 message,
@@ -2862,11 +2864,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 updatedAt: startedAt,
               },
             });
-            for (const update of pendingUpdates) {
-              yield* handleInteractionUpdate(context, update);
-            }
-
-            yield* sdkRun.wait.pipe(
+            const active = context;
+            yield* Effect.forEach(
+              pendingUpdates,
+              (update) => handleInteractionUpdate(active, update),
+              { discard: true },
+            ).pipe(
+              Effect.andThen(sdkRun.wait),
               Effect.flatMap((result) =>
                 Effect.gen(function* () {
                   if (
@@ -2926,34 +2930,45 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   }
                 }),
               ),
-              Effect.catch((cause) =>
-                Effect.gen(function* () {
-                  if (context !== null) {
-                    yield* finalizeTurn({
-                      context,
-                      status: context.interrupted ? "interrupted" : "failed",
-                      ...(context.interrupted
-                        ? {}
-                        : {
-                            failure: makeProviderFailure({
-                              cause,
-                              message: CursorAgentSdk.isCursorAgentSdkRunnerError(cause)
-                                ? CursorAgentSdk.cursorSdkFailureMessage(cause)
-                                : undefined,
-                              class: CursorAgentSdk.isCursorUsageLimitError(cause)
-                                ? "usage_limit"
-                                : "transport_error",
-                            }),
-                          }),
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (failure) =>
+                  Effect.gen(function* () {
+                    const cause = Cause.squash(failure);
+                    yield* Effect.logWarning("orchestration-v2.cursor-run-failed", {
+                      providerSessionId: input.providerSessionId,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId,
+                      cause,
                     });
-                  }
-                  yield* Effect.logWarning("orchestration-v2.cursor-run-failed", {
-                    providerSessionId: input.providerSessionId,
-                    providerThreadId: turnInput.providerThread.id,
-                    providerTurnId,
-                    cause,
-                  });
-                }),
+                    const verifyEnded = active.run.verifyEnded;
+                    if (verifyEnded === undefined || active.finalized) return;
+                    if (!(yield* verifyEnded)) {
+                      yield* Effect.sleep("60 seconds");
+                      while (!active.finalized && !(yield* verifyEnded)) {
+                        yield* Effect.sleep("10 minutes");
+                      }
+                    }
+                    if (!active.finalized) {
+                      yield* finalizeTurn({
+                        context: active,
+                        status: active.interrupted ? "interrupted" : "failed",
+                        ...(active.interrupted
+                          ? {}
+                          : {
+                              failure: makeProviderFailure({
+                                cause,
+                                message: CursorAgentSdk.isCursorAgentSdkRunnerError(cause)
+                                  ? CursorAgentSdk.cursorSdkFailureMessage(cause)
+                                  : undefined,
+                                class: CursorAgentSdk.isCursorUsageLimitError(cause)
+                                  ? "usage_limit"
+                                  : "transport_error",
+                              }),
+                            }),
+                      });
+                    }
+                  }),
               ),
               Effect.forkIn(sessionScope),
             );
@@ -2967,6 +2982,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     threadId: turnInput.threadId,
                     providerThreadId: turnInput.providerThread.id,
                     runId: turnInput.runId,
+                    ...(cause._tag === "CursorModelUnavailableError"
+                      ? { outcome: "not_delivered" as const }
+                      : {}),
                     cause,
                   }),
               ),
@@ -2995,6 +3013,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           driver: CursorAgentSdk.CURSOR_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
+          claimsTurnDelivery: true,
           getModelContextWindow: (selection) =>
             selection.instanceId === adapterOptions.instanceId
               ? cursorContextWindowTokens(selection, adapterOptions.getModels?.() ?? [])
@@ -3159,18 +3178,24 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 providerThreadId: turnInput.providerThread.id,
                 providerTurnId: turnInput.providerTurnId,
               });
-              yield* finalizeTurn({ context, status: "interrupted" });
+              return yield* new ProviderAdapter.ProviderAdapterInterruptTimeoutError({
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                providerThreadId: turnInput.providerThread.id,
+                providerTurnId: turnInput.providerTurnId,
+                timeoutMs: 10_000,
+              });
             },
             (effect, turnInput) =>
               effect.pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterInterruptError({
-                      driver: CursorAgentSdk.CURSOR_PROVIDER,
-                      providerThreadId: turnInput.providerThread.id,
-                      providerTurnId: turnInput.providerTurnId,
-                      cause,
-                    }),
+                Effect.mapError((cause) =>
+                  cause._tag === "ProviderAdapterInterruptTimeoutError"
+                    ? cause
+                    : new ProviderAdapter.ProviderAdapterInterruptError({
+                        driver: CursorAgentSdk.CURSOR_PROVIDER,
+                        providerThreadId: turnInput.providerThread.id,
+                        providerTurnId: turnInput.providerTurnId,
+                        cause,
+                      }),
                 ),
               ),
           ),

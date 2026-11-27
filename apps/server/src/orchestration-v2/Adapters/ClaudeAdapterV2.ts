@@ -761,6 +761,7 @@ export interface ClaudeAgentSdkQuerySession {
   >;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  readonly awaitProcessExit?: Effect.Effect<void>;
 }
 
 type ClaudeQueryStreamExit = Exit.Exit<void, ClaudeAgentSdkQueryRunnerError>;
@@ -1595,7 +1596,11 @@ export const layerQueryRunner: Layer.Layer<
               executableArgs: [...launch.args, ...(queryOptions.executableArgs ?? [])],
             };
       const unit = launch?.unit;
-      const stopScope = unit === undefined ? undefined : () => void runFork(agentScope.stop(unit));
+      const reapScope =
+        unit === undefined ? undefined : yield* Effect.cached(agentScope.stop(unit));
+      const stopScope = reapScope === undefined ? undefined : () => void runFork(reapScope);
+      let reapAfterExit = reapScope ?? Effect.void;
+      const reapedExit = yield* Deferred.make<void>();
       // Only a CLI that fails before its first message explains itself on
       // stderr. The known root refusal becomes a curated failure; any other
       // stderr can hold private text, so it stays out of turn failures.
@@ -1627,9 +1632,7 @@ export const layerQueryRunner: Layer.Layer<
               const polling = runFork(
                 tracker.refresh.pipe(Effect.repeat(Schedule.spaced(CLAUDE_DESCENDANT_POLL))),
               );
-              child.once("exit", () =>
-                runFork(Fiber.interrupt(polling).pipe(Effect.andThen(tracker.stop))),
-              );
+              reapAfterExit = Fiber.interrupt(polling).pipe(Effect.andThen(tracker.stop));
               refreshDescendants = tracker.refresh;
             }
             return child;
@@ -1655,12 +1658,13 @@ export const layerQueryRunner: Layer.Layer<
         child.on("error", releaseAgent);
         processExited = child.exitCode !== null || child.signalCode != null;
         processExit = new Promise<void>((resolve) => {
-          if (processExited) resolve();
-          else
-            child.once("exit", () => {
-              processExited = true;
-              resolve();
-            });
+          const onExit = () => {
+            processExited = true;
+            resolve();
+            runFork(reapAfterExit.pipe(Effect.andThen(Deferred.succeed(reapedExit, undefined))));
+          };
+          if (processExited) onExit();
+          else child.once("exit", onExit);
         });
         return child;
       };
@@ -1980,10 +1984,36 @@ export const layerQueryRunner: Layer.Layer<
             }),
           ),
         ),
+        awaitProcessExit: Deferred.await(reapedExit),
         // A job started since the last poll is recorded before the CLI is told to exit.
         close: Effect.suspend(() => (processExited ? Effect.void : refreshDescendants)).pipe(
           Effect.andThen(Queue.shutdown(promptQueue)),
           Effect.andThen(closeClaudeQuery(queryRuntime)),
+          Effect.andThen(
+            Effect.gen(function* () {
+              const child = spawnedProcess;
+              const exit = processExit;
+              if (child === undefined || exit === undefined) return;
+              const graceful = yield* Effect.promise(() => exit).pipe(
+                Effect.timeoutOption("5 seconds"),
+              );
+              if (Option.isNone(graceful) && !processExited) {
+                yield* Effect.try({
+                  try: () => child.kill("SIGKILL"),
+                  catch: (cause) => queryRunnerError(cause, "close"),
+                });
+              }
+              yield* Deferred.await(reapedExit);
+            }).pipe(
+              Effect.timeoutOrElse({
+                duration: "10 seconds",
+                orElse: () =>
+                  Effect.fail(
+                    queryRunnerError(new Error("Claude process exit not confirmed"), "close"),
+                  ),
+              }),
+            ),
+          ),
           Effect.tap(() =>
             logProtocolEvent({
               direction: "outgoing",
@@ -13533,6 +13563,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               executedModel: undefined,
             };
             const attachTurn = Effect.gen(function* () {
+              yield* ProviderAdapter.claimTurnDelivery(turnInput);
               // Set before claiming: a query that exits after the claim finalizes this turn; one that exits before it fails the start.
               yield* Ref.set(activeTurn, context);
               const attached = yield* Ref.modify(queryContext, (current) => {
@@ -13544,12 +13575,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
               if (!attached) {
                 yield* Ref.update(activeTurn, (current) => (current === context ? null : current));
-                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: CLAUDE_PROVIDER,
-                  detail: CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL,
-                  ...(querySession.exitCause === undefined
-                    ? {}
-                    : { cause: querySession.exitCause }),
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  outcome: "not_delivered",
+                  cause: new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL,
+                    ...(querySession.exitCause === undefined
+                      ? {}
+                      : { cause: querySession.exitCause }),
+                  }),
                 });
               }
               if (
@@ -13631,9 +13669,34 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       ),
                     ),
                   );
+            const submitUserMessage = offerUserMessage.pipe(
+              Effect.catchCause((cause) =>
+                Effect.gen(function* () {
+                  if (offerCommitted || Cause.hasInterruptsOnly(cause))
+                    return yield* Effect.failCause(cause);
+                  const error = Cause.squash(cause);
+                  if ((yield* Ref.get(activeTurn)) === context) {
+                    yield* finalizeActiveTurn({
+                      context,
+                      status: "failed",
+                      completedAt: yield* DateTime.now,
+                      failure: makeProviderFailure({ cause: error, class: "provider_error" }),
+                    });
+                  }
+                  return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
+                    driver: CLAUDE_PROVIDER,
+                    threadId: turnInput.threadId,
+                    providerThreadId: turnInput.providerThread.id,
+                    runId: turnInput.runId,
+                    outcome: "not_delivered",
+                    cause: error,
+                  });
+                }),
+              ),
+            );
             if (userMessage !== null && !turnInput.resume) {
               yield* attachTurn;
-              yield* offerUserMessage;
+              yield* submitUserMessage;
               return;
             }
             // Transcript reads suspend replay; hold SDK frames until the buffer is applied to preserve order.
@@ -13764,7 +13827,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (userMessage !== null) {
               yield* sdkMessageLock.withPermits(1)(
                 Effect.gen(function* () {
-                  if ((yield* Ref.get(activeTurn)) === context) yield* offerUserMessage;
+                  if ((yield* Ref.get(activeTurn)) === context) yield* submitUserMessage;
                 }),
               );
             }
@@ -13772,15 +13835,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           (effect, turnInput) =>
             effect.pipe(
               Effect.scoped,
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: CLAUDE_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
+              Effect.mapError((cause) =>
+                ProviderAdapter.isProviderAdapterTurnStartError(cause)
+                  ? cause
+                  : new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: CLAUDE_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      cause,
+                    }),
               ),
             ),
         );
@@ -14203,6 +14267,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           driver: CLAUDE_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
+          claimsTurnDelivery: true,
+          awaitVerifiedRuntimeExit: Ref.get(queryContext).pipe(
+            Effect.flatMap((context) => context?.query.awaitProcessExit ?? Effect.never),
+          ),
           getModelContextWindow: (selection) => claudeContextWindow(selection) ?? undefined,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           backgroundTasksEndWithProcess: true,

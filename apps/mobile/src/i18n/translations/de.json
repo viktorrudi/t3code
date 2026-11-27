@@ -870,6 +870,8 @@
   "2605da0149cd15f1": "Kontext wird komprimiert",
   "39a82db18ca50c21": "Kontext komprimiert: {before} → {after} Tokens",
   "885ae08a2160a158": "Kontext komprimiert",
+  "db986d42cd701c4c": "Skills-Aktualisierung abgeschlossen",
+  "d217a938cb47e53f": "Warten, bis die Skills-Aktualisierung abgeschlossen ist, bevor gestartet wird.",
   "3ab6b281a0991766": "{count, plural, =1 {Verknüpfte Pull Requests geprüft} other {Verknüpfte Pull Requests {count}-mal geprüft}}",
   "857e92a89b6b6257": "{count, plural, one {{count} Datei gelesen} other {{count} Dateien gelesen}}",
   "466ac7fcdb97bb76": "{count, plural, one {{count} Datei geändert} other {{count} Dateien geändert}}",

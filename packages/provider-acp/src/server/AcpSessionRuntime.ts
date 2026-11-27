@@ -1107,6 +1107,7 @@ export interface AcpSessionActivationOptions {
 export class AcpSessionRuntime extends Context.Service<
   AcpSessionRuntime,
   {
+    readonly awaitVerifiedExit?: Effect.Effect<void>;
     readonly handleRequestPermission: EffectAcpClient.AcpClient["Service"]["handleRequestPermission"];
     readonly handleElicitation: EffectAcpClient.AcpClient["Service"]["handleElicitation"];
     readonly handleMcpConnect: EffectAcpClient.AcpClient["Service"]["handleMcpConnect"];
@@ -1272,6 +1273,22 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const hostPlatform = yield* HostProcess.Platform;
   const runtimeScope = yield* Scope.fork(yield* Scope.Scope);
+  const runtimeReaped = yield* Deferred.make<void>();
+  let reapFailed = false;
+  // This finalizer runs after the child and its owned process groups are reaped.
+  yield* Scope.addFinalizer(
+    runtimeScope,
+    Effect.suspend(() => (reapFailed ? Effect.void : Deferred.succeed(runtimeReaped, undefined))),
+  );
+  const reapOwnedProcesses = (cleanup: Effect.Effect<void, AcpProcessGroupTerminationError>) =>
+    cleanup.pipe(
+      Effect.tapCause(() =>
+        Effect.sync(() => {
+          reapFailed = true;
+        }),
+      ),
+      Effect.ignoreCause({ log: true }),
+    );
   const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
   const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
   const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallTrackedState>());
@@ -1451,9 +1468,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   if (linuxCgroupLease !== undefined) {
     yield* Scope.addFinalizer(
       runtimeScope,
-      Effect.uninterruptible(terminateLinuxCgroupLease(linuxCgroupLease)).pipe(
-        Effect.ignoreCause({ log: true }),
-      ),
+      reapOwnedProcesses(Effect.uninterruptible(terminateLinuxCgroupLease(linuxCgroupLease))),
     );
   }
   const containedTargetCommand =
@@ -1587,10 +1602,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     }
   }
 
+  // macOS can reject a second SIGKILL while a successfully signaled group is exiting.
+  let groupForceSignalNeeded = true;
   const signalOwnedProcessGroup = (signal: NodeJS.Signals) =>
     Effect.try({
       try: () => {
+        if (!groupForceSignalNeeded) return false;
         signalProcessGroup(Number(child.pid), signal);
+        if (signal === "SIGKILL") groupForceSignalNeeded = false;
         return true;
       },
       catch: (cause) =>
@@ -1601,7 +1620,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     }).pipe(
       Effect.catch((error) => {
         const cause = error.cause as NodeJS.ErrnoException | undefined;
-        return cause?.code === "ESRCH" ? Effect.succeed(false) : Effect.fail(error);
+        if (cause?.code !== "ESRCH") return Effect.fail(error);
+        groupForceSignalNeeded = false;
+        return Effect.succeed(false);
       }),
     );
   const terminateWindowsProcessTree =
@@ -1688,9 +1709,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             : signalOwnedProcessGroup("SIGKILL").pipe(Effect.asVoid);
     yield* Scope.addFinalizer(
       runtimeScope,
-      Effect.uninterruptible(forceTerminateOwnedProcessGroup).pipe(
-        Effect.ignoreCause({ log: true }),
-      ),
+      reapOwnedProcesses(Effect.uninterruptible(forceTerminateOwnedProcessGroup)),
     );
   }
   yield* child.stderr.pipe(
@@ -2634,6 +2653,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   });
 
   return {
+    awaitVerifiedExit: Deferred.await(runtimeReaped).pipe(
+      Effect.andThen(EffectAcpClient.awaitChildProcessExit(child)),
+    ),
     handleRequestPermission: acp.handleRequestPermission,
     handleElicitation: acp.handleElicitation,
     handleMcpConnect: acp.handleMcpConnect,

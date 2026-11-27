@@ -870,6 +870,8 @@
   "2605da0149cd15f1": "Compacting context",
   "39a82db18ca50c21": "Context compacted {before} → {after} tokens",
   "885ae08a2160a158": "Context compacted",
+  "db986d42cd701c4c": "Skills update finished",
+  "d217a938cb47e53f": "Waiting for a skills update to finish before starting.",
   "3ab6b281a0991766": "{count, plural, =1 {Checked linked pull requests} other {Checked linked pull requests {count} times}}",
   "857e92a89b6b6257": "{count, plural, one {Read {count} file} other {Read {count} files}}",
   "466ac7fcdb97bb76": "{count, plural, one {Changed {count} file} other {Changed {count} files}}",

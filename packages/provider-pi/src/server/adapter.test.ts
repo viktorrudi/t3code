@@ -890,7 +890,10 @@ describe("PiAdapterV2", () => {
           });
         }
         const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
-        assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "failed");
+        assert(terminal.type === "turn.terminal" && terminal.status === "failed");
+        if (failure === "rejected prompt") {
+          assert.include(terminal.failure.message, "Request rejected");
+        }
         assert.deepInclude(runtime.providerSession, {
           status: "error",
           extensionStatuses: [{ key: "watch", text: "Watching 3 files" }],
@@ -7173,6 +7176,10 @@ describe("PiRpc early process exit", () => {
       assert.isFalse((error.detail ?? "").includes("super-secret"));
       assert.isFalse(error.message.includes("API_KEY"));
       assert.isFalse(error.message.includes("super-secret"));
+      const unsent = yield* connection
+        .send({ type: "prompt", message: "discarded" })
+        .pipe(Effect.flip);
+      assert.strictEqual(unsent, error);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

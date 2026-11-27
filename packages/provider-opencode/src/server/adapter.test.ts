@@ -187,6 +187,9 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
           version: "1.14.19",
           external: turnSettings.exitCode === undefined,
           exitCode: turnSettings.exitCode ?? null,
+          ...(turnSettings.exitCode === undefined
+            ? {}
+            : { verifiedExitCode: turnSettings.exitCode }),
         }),
       createOpenCodeSdkClient: () => client,
     } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
@@ -272,6 +275,105 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect("retains a timed-out command until the native session settles", () =>
+    Effect.gen(function* () {
+      const sessionId = "command-admission-deadline";
+      const nativeEvents = asyncEventStream();
+      const commandStarted = promiseGate<string>();
+      const abortStarted = promiseGate<void>();
+      const abortReply = promiseGate<{ data: boolean }>();
+      let nativeStatus = "busy";
+      const harness = yield* makeOpenCodeRuntimeHarness(sessionId, sessionId, {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        command: { list: async () => ({ data: [{ name: "review" }] }) },
+        session: {
+          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          command: (input: { messageID: string }, options: { signal: AbortSignal }) => {
+            commandStarted.resolve(input.messageID);
+            return new Promise<never>((_, reject) => {
+              options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+                once: true,
+              });
+            });
+          },
+          status: async () => ({ data: { [sessionId]: { type: nativeStatus } } }),
+          messages: async () => ({ data: [] }),
+          abort: () => {
+            abortStarted.resolve();
+            return abortReply.promise;
+          },
+        },
+      });
+      const terminal = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      const start = yield* harness.startTurn("/review").pipe(Effect.forkChild);
+      const messageID = yield* Effect.promise(() => commandStarted.promise);
+      yield* TestClock.adjust("10 seconds");
+      yield* Effect.promise(() => abortStarted.promise);
+      assert.isUndefined(terminal.pollUnsafe());
+      abortReply.resolve({ data: true });
+      yield* Fiber.join(start);
+      assert.isUndefined(terminal.pollUnsafe());
+      nativeStatus = "idle";
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: sessionId,
+            info: { id: messageID, sessionID: sessionId, role: "user", time: { created: 1 } },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({ type: "session.idle", properties: { sessionID: sessionId } }),
+      );
+      yield* Fiber.join(terminal);
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  it.effect.each([
+    { reason: "a 400 rejection", cause: { status: 400 }, rejected: true },
+    { reason: "a gateway error", cause: { status: 502 }, rejected: false },
+    { reason: "a reset connection", cause: { code: "ECONNRESET" }, rejected: false },
+  ])("classifies prompt delivery after $reason", ({ cause, rejected }) =>
+    Effect.gen(function* () {
+      const sessionId = "prompt-delivery";
+      const nativeEvents = asyncEventStream();
+      const harness = yield* makeOpenCodeRuntimeHarness(sessionId, sessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => {
+            throw new Error("Fixture prompt error", { cause });
+          },
+          status: async () => ({ data: { [sessionId]: { type: "busy" } } }),
+        },
+      });
+      const terminal = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      const error = yield* harness.startTurn().pipe(Effect.flip);
+      assert(ProviderAdapter.isProviderAdapterTurnStartError(error));
+      assert.equal(error.outcome, rejected ? "not_delivered" : undefined);
+      if (rejected) {
+        assert.equal(Option.getOrUndefined(yield* Fiber.join(terminal))?.status, "failed");
+      } else {
+        yield* TestClock.adjust("1 millis");
+        assert.isUndefined(terminal.pollUnsafe());
+      }
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
   it.effect("cleans abandoned native descendants before registering their root thread", () =>
     Effect.gen(function* () {
       const aborted: string[] = [];
@@ -2373,7 +2475,7 @@ describe("OpenCodeAdapterV2", () => {
             Stream.runDrain,
           );
           yield* TestClock.adjust(0);
-          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+          assert.equal(yield* harness.runtime.hasPendingBackgroundWork!, end === "failed-stream");
           yield* offers[0]!.onRunEndedWithoutStarting!();
           assert.deepEqual(aborted, [], "failed-session callbacks cannot abort a replacement");
           assert.isTrue(
@@ -2496,7 +2598,10 @@ describe("OpenCodeAdapterV2", () => {
               requestRuntimeRestart: true,
             });
           }
-          if (foreground !== null) yield* Fiber.join(foreground);
+          if (foreground !== null) {
+            const settled = yield* Fiber.await(foreground);
+            assert.equal(settled._tag, end === "foreground-eof" ? "Failure" : "Success");
+          }
           assert.equal(
             promptIds.length,
             1,
@@ -4231,7 +4336,7 @@ describe("OpenCodeAdapterV2", () => {
               });
             }
             // The SDK wraps an HTTP error reply in an Error with its status on `cause`.
-            throw new Error("steer rejected", { cause: { body: "steer rejected", status: 503 } });
+            throw new Error("steer rejected", { cause: { body: "steer rejected", status: 400 } });
           },
           abort: async () => ({ data: true }),
           children: async () => ({ data: [] }),
@@ -4332,7 +4437,7 @@ describe("OpenCodeAdapterV2", () => {
               promptIds.push(input.messageID);
               if (promptIds.length === 1) return { data: true };
               if (promptIds.length === 3) {
-                throw new Error("Service Unavailable", { cause: { status: 503 } });
+                throw new Error("Steer rejected", { cause: { status: 400 } });
               }
               throw new TypeError("fetch failed", {
                 cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }),
@@ -4657,7 +4762,7 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
-  it.effect("fails an active turn when the OpenCode event stream ends cleanly", () =>
+  it.effect("reports stream loss without a terminal when the OpenCode server may still run", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
       const harness = yield* makeOpenCodeRuntimeHarness(
@@ -4679,23 +4784,30 @@ describe("OpenCodeAdapterV2", () => {
         },
       );
       yield* harness.startTurn();
+      const received: ProviderAdapter.ProviderAdapterV2Event[] = [];
       const terminalEvents = yield* harness.runtime.events.pipe(
-        Stream.runCollect,
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            received.push(event);
+          }),
+        ),
+        Effect.result,
         Effect.forkScoped,
       );
 
       nativeEvents.close();
-      const received = Array.from(yield* Fiber.join(terminalEvents));
+      const result = yield* Fiber.join(terminalEvents);
       assert.isTrue(
         received.some(
           (event) =>
             event.type === "provider_session.updated" && event.providerSession.status === "error",
         ),
       );
-      const terminal = received.find((event) => event.type === "turn.terminal");
-      assert.equal(terminal?.status, "failed");
-      assert.equal(terminal?.failure?.class, "transport_error");
-      assert.equal(terminal?.threadDisposition, "broken");
+      assert.isFalse(received.some((event) => event.type === "turn.terminal"));
+      assert(
+        result._tag === "Failure" && result.failure._tag === "ProviderAdapterEventStreamError",
+      );
+      assert.isUndefined(result.failure.runtimeEnded);
       assert.equal((yield* Effect.exit(harness.startTurn()))._tag, "Failure");
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
@@ -4736,7 +4848,16 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
       ).pipe(Effect.provideService(Clock.Clock, blockingClock));
-      const events = yield* harness.runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
+      const received: ProviderAdapter.ProviderAdapterV2Event[] = [];
+      const events = yield* harness.runtime.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            received.push(event);
+          }),
+        ),
+        Effect.result,
+        Effect.forkScoped,
+      );
       const start = yield* harness.startTurn("/compact").pipe(Effect.forkScoped);
       yield* Effect.promise(() => summarizeStarted.promise);
       blockNextClockRead = true;
@@ -4745,11 +4866,10 @@ describe("OpenCodeAdapterV2", () => {
       summarizeResult.resolve({ data: true });
       yield* Fiber.join(start);
       yield* Deferred.succeed(releaseEofClockRead, undefined);
-      const received = Array.from(yield* Fiber.join(events));
-      const terminals = received.filter((event) => event.type === "turn.terminal");
-      assert.lengthOf(terminals, 1);
-      assert.equal(terminals[0]?.status, "failed");
-      assert.equal(terminals[0]?.failure?.class, "transport_error");
+      const lost = yield* Fiber.join(events);
+      assert(lost._tag === "Failure" && lost.failure._tag === "ProviderAdapterEventStreamError");
+      assert.isUndefined(lost.failure.runtimeEnded);
+      assert.isFalse(received.some((event) => event.type === "turn.terminal"));
       assert.isFalse(
         received.some(
           (event) =>
@@ -4809,9 +4929,13 @@ describe("OpenCodeAdapterV2", () => {
         .pipe(Effect.provideService(Clock.Clock, blockingClock), Effect.exit, Effect.forkScoped);
       yield* Deferred.await(startClockRead);
 
-      const events = yield* harness.runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
+      const events = yield* harness.runtime.events.pipe(
+        Stream.runDrain,
+        Effect.result,
+        Effect.forkScoped,
+      );
       nativeEvents.close();
-      yield* Fiber.join(events);
+      assert.equal((yield* Fiber.join(events))._tag, "Failure");
       yield* Deferred.succeed(releaseStartClockRead, undefined);
 
       assert.isTrue(Exit.isFailure(yield* Fiber.join(start)));
