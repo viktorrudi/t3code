@@ -5567,9 +5567,9 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each([false, true])(
-    "waits for verified exit after a prompt transport failure (Stop: %s)",
-    (stop) =>
+  it.effect.each(["failure", "stop", "timeout"] as const)(
+    "waits for verified exit after a prompt transport failure (%s)",
+    (outcome) =>
       Effect.gen(function* () {
         const rejectPrompt = yield* Deferred.make<void>();
         const confirmExit = yield* Deferred.make<void>();
@@ -5626,15 +5626,38 @@ describe("AcpAdapterV2", () => {
           })
           .pipe(Effect.flip);
         assert.equal(steer._tag, "ProviderAdapterSteerRunError");
-        if (stop)
+        if (outcome === "stop")
           yield* harness.runtime.interruptTurn({
             providerThread: harness.providerThread,
             providerTurnId,
           });
         assert.isUndefined(terminals.pollUnsafe());
+        if (outcome === "timeout") {
+          const nextStart = yield* harness
+            .startTurn(2)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          assert.isUndefined(nextStart.pollUnsafe());
+          yield* TestClock.adjust("10 seconds");
+          const rejected = nextStart.pollUnsafe();
+          const terminalBeforeProof = terminals.pollUnsafe();
+          yield* Deferred.succeed(confirmExit, undefined);
+          if (rejected === undefined || Exit.isSuccess(rejected)) {
+            assert.fail(
+              "unverified prompt retirement must reject a queued start without a terminal",
+            );
+          }
+          assert.include(Cause.pretty(rejected.cause), "session is poisoned");
+          const laterStart = yield* harness.startTurn(3).pipe(Effect.exit);
+          if (Exit.isSuccess(laterStart)) assert.fail("poisoned session must reject a later start");
+          assert.include(Cause.pretty(laterStart.cause), "session is poisoned");
+          assert.isUndefined(terminalBeforeProof);
+          assert.isUndefined(terminals.pollUnsafe());
+          assert.lengthOf(harness.natives, 1);
+          return;
+        }
         yield* Deferred.succeed(confirmExit, undefined);
         const [terminal] = yield* Fiber.join(terminals);
-        assert.equal(terminal?.status, stop ? "interrupted" : "failed");
+        assert.equal(terminal?.status, outcome === "stop" ? "interrupted" : "failed");
         yield* harness.startTurn(2);
         const [next] = yield* harness.terminals(1);
         assert.equal(next?.status, "completed");
@@ -11761,7 +11784,7 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.live("holds concurrent startTurn behind successful hard teardown and reloads once", () =>
+  it.effect.each([true, false])("hard Stop waits for exit proof (%s)", (exits) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -11876,6 +11899,24 @@ describe("AcpAdapterV2", () => {
         Fiber.await(interruptFiber).pipe(Effect.as(false)),
       );
       const terminalBeforeExit = yield* Deferred.isDone(reachedTerminal);
+      if (!exits) {
+        assert.isTrue(verified);
+        yield* TestClock.adjust("10 seconds");
+        const interrupted = interruptFiber.pollUnsafe();
+        yield* Deferred.succeed(releaseExit, undefined);
+        if (interrupted === undefined || Exit.isSuccess(interrupted)) {
+          assert.fail(
+            "unverified exit must return a poisoned session without waiting for exit proof",
+          );
+        }
+        assert.include(Cause.pretty(interrupted.cause), "session is poisoned");
+        const started = yield* Fiber.await(startFiber);
+        if (Exit.isSuccess(started)) assert.fail("poisoned session must reject queued start");
+        assert.include(Cause.pretty(started.cause), "session is poisoned");
+        assert.isFalse(yield* Deferred.isDone(reachedTerminal));
+        assert.equal(runtimeOrdinalSeen, 1);
+        return;
+      }
       yield* Deferred.succeed(releaseExit, undefined);
       yield* Fiber.join(interruptFiber);
       yield* Fiber.join(startFiber);

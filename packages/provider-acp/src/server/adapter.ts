@@ -8739,7 +8739,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return false;
         });
 
-        let retiringPrompt: ActiveAcpTurn | undefined;
+        let retiringPrompt:
+          | {
+              readonly context: ActiveAcpTurn;
+              readonly completed: Deferred.Deferred<
+                void,
+                ProviderAdapter.ProviderAdapterProtocolError
+              >;
+            }
+          | undefined;
         const quarantinePrompt = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           generation: number,
@@ -8748,7 +8756,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             closingScope: runtimeScope,
             verifiedExit: runtime.awaitVerifiedExit,
           };
-          retiringPrompt = context;
+          const completed = yield* Deferred.make<
+            void,
+            ProviderAdapter.ProviderAdapterProtocolError
+          >();
+          retiringPrompt = { context, completed };
           openAgentRequests.clear();
           yield* quarantineNativeTransportAtGeneration(generation);
           yield* advanceRuntimeCallbackGeneration;
@@ -8763,14 +8775,32 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           { closingScope, verifiedExit }: Effect.Success<ReturnType<typeof quarantinePrompt>>,
         ) {
           if (closingScope !== undefined) yield* Scope.close(closingScope, Exit.void);
-          yield* verifiedExit ?? Effect.never;
+          const observedExit =
+            verifiedExit === undefined
+              ? Option.none()
+              : yield* verifiedExit.pipe(
+                  Effect.interruptible,
+                  Effect.timeoutOption(ACP_STOP_CONFIRM_TIMEOUT_MS),
+                );
           yield* runtimeCallbackPermit.withPermit(
             Effect.gen(function* () {
+              const retiring = retiringPrompt;
+              if (retiring?.context !== context) return;
+              if (Option.isNone(observedExit)) {
+                const error = new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver,
+                  detail: "ACP runtime exit was not verified; the session is poisoned",
+                });
+                yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
+                yield* Deferred.fail(retiring.completed, error);
+                return;
+              }
               const status = context.interrupted ? "interrupted" : "failed";
               if (followsAgentWorkState) yield* settleNativeWorkAfterExit();
               if (status === "failed") yield* terminalizeOpenForegroundTools(context, status);
               yield* finalizeTurn(context, status, context.interrupted ? undefined : failure);
               retiringPrompt = undefined;
+              yield* Deferred.succeed(retiring.completed, undefined);
             }),
           );
         });
@@ -9610,7 +9640,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const context = yield* Ref.get(activeTurn);
               if (
                 context === null ||
-                context === retiringPrompt ||
+                context === retiringPrompt?.context ||
                 context.finalized ||
                 context.interrupted ||
                 context.providerTurnId !== turnInput.providerTurnId
@@ -9989,7 +10019,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const context = yield* Ref.get(activeTurn);
               if (
                 context === null ||
-                context === retiringPrompt ||
+                context === retiringPrompt?.context ||
                 context.finalized ||
                 context.providerTurnId !== turnInput.providerTurnId
               ) {
@@ -10084,7 +10114,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       const interruptContext = yield* Ref.get(activeTurn);
                       if (
                         interruptContext !== null &&
-                        interruptContext === retiringPrompt &&
+                        interruptContext === retiringPrompt?.context &&
                         interruptContext.providerTurnId === turnInput.providerTurnId
                       ) {
                         interruptContext.interrupted = true;
@@ -10345,7 +10375,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             "ACP runtime does not expose exit verification; the session is poisoned",
                           ).pipe(Effect.flatMap(Effect.fail));
                         }
-                        yield* verifiedExit;
+                        const observedExit = yield* verifiedExit.pipe(
+                          Effect.interruptible,
+                          Effect.timeoutOption(ACP_STOP_CONFIRM_TIMEOUT_MS),
+                        );
+                        if (Option.isNone(observedExit)) {
+                          return yield* poisonTeardown(
+                            "ACP runtime exit was not verified; the session is poisoned",
+                          ).pipe(Effect.flatMap(Effect.fail));
+                        }
                         yield* runtimeCallbackPermit.withPermit(
                           Effect.gen(function* () {
                             if (followsAgentWorkState) yield* settleNativeWorkAfterExit();
