@@ -109,6 +109,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -1538,6 +1539,7 @@ function codexStdioMcpServerNames(mcpServers: unknown): ReadonlyArray<string> {
 
 function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
+  readonly environmentId: string | undefined;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly stdioMcpServers?: ReadonlyArray<string>;
   readonly modelSelection?: { readonly model: string };
@@ -1564,16 +1566,21 @@ function codexThreadRuntimeParams(input: {
       // One app-server serves many threads, so the id goes in per-thread shell config, not its env.
       ...(input.threadId === null
         ? {}
-        : {
-            [`shell_environment_policy.set.${PortScanner.AGENT_THREAD_ENV}`]: input.threadId,
-            // Codex starts the user's stdio MCP servers per thread, outside the shell policy.
-            ...Object.fromEntries(
-              (input.stdioMcpServers ?? []).map((name) => [
-                `mcp_servers.${name}.env.${PortScanner.AGENT_THREAD_ENV}`,
-                input.threadId,
+        : Object.fromEntries(
+            Object.entries({
+              [PortScanner.AGENT_THREAD_ENV]: input.threadId,
+              ...(input.environmentId === undefined
+                ? {}
+                : { [ServerEnvironment.ENVIRONMENT_ID_ENV]: input.environmentId }),
+            }).flatMap(([variable, value]) => [
+              [`shell_environment_policy.set.${variable}`, value],
+              // Codex starts the user's stdio MCP servers per thread, outside the shell policy.
+              ...(input.stdioMcpServers ?? []).map((name) => [
+                `mcp_servers.${name}.env.${variable}`,
+                value,
               ]),
-            ),
-          }),
+            ]),
+          )),
       ...(t3Server === undefined
         ? {}
         : {
@@ -1956,6 +1963,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   const readMcpSession = (threadId: ThreadId | null) =>
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
+  const environmentId = adapterOptions.environment[ServerEnvironment.ENVIRONMENT_ID_ENV];
   const continuationRequests = adapterOptions.continuationRequests;
 
   return ProviderAdapter.ProviderAdapterV2.of({
@@ -7859,6 +7867,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   resumeNativeThread(threadId, {
                     excludeTurns: true,
                     ...codexThreadRuntimeParams({
+                      environmentId,
                       threadId: providerThread.appThreadId,
                       mcpSession,
                       stdioMcpServers,
@@ -8034,6 +8043,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               Effect.flatMap(([mcpSession, stdioMcpServers]) =>
                 client.request("thread/start", {
                   ...codexThreadRuntimeParams({
+                    environmentId,
                     threadId: threadInput.threadId,
                     mcpSession,
                     stdioMcpServers,
@@ -8072,6 +8082,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const resume = resumeNativeThread(nativeThreadId, {
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
+                  environmentId,
                   threadId: appThreadId,
                   mcpSession: yield* readMcpSession(appThreadId),
                   stdioMcpServers: yield* readStdioMcpServers(threadInput.runtimePolicy?.cwd),
@@ -8970,6 +8981,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 yield* resumeNativeThread(threadId, {
                   excludeTurns: true,
                   ...codexThreadRuntimeParams({
+                    environmentId,
                     threadId: threadInput.providerThread.appThreadId,
                     mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
                     stdioMcpServers: yield* readStdioMcpServers(undefined),
@@ -9019,6 +9031,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 excludeTurns: true,
                 ...(boundary.lastTurnId === undefined ? {} : { lastTurnId: boundary.lastTurnId }),
                 ...codexThreadRuntimeParams({
+                  environmentId,
                   threadId: threadInput.targetThreadId,
                   mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
                   stdioMcpServers: yield* readStdioMcpServers(threadInput.runtimePolicy?.cwd),

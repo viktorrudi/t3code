@@ -5,6 +5,7 @@ import {
   type ProviderInstanceConfigMap,
   type ProviderInstanceEnvironment,
   type ProviderDriverKind,
+  type EnvironmentId,
   type ResolvedProviderInstanceEnvironment,
   type SecretReference,
   secretReferencesInSettings,
@@ -26,6 +27,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
 import { buildUnavailableProviderSnapshot } from "./unavailableProviderSnapshot.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
@@ -91,6 +94,17 @@ const withoutSecretReferences = (
   environment.flatMap((variable) =>
     typeof variable.value === "string" ? [{ ...variable, value: variable.value }] : [],
   );
+
+// The native id outranks a configured copy in any case, so a provider cannot claim another host.
+const withNativeEnvironmentId = (
+  environment: ResolvedProviderInstanceEnvironment,
+  environmentId: EnvironmentId,
+): ResolvedProviderInstanceEnvironment => [
+  ...environment.filter(
+    (variable) => variable.name.toUpperCase() !== ServerEnvironment.ENVIRONMENT_ID_ENV,
+  ),
+  { name: ServerEnvironment.ENVIRONMENT_ID_ENV, value: environmentId, sensitive: false },
+];
 
 interface CheckedSecret {
   readonly reference: SecretReference;
@@ -204,6 +218,7 @@ const isEntryEnabled = Effect.fn("ProviderInstanceRegistry.isEntryEnabled")(func
 const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R>(input: {
   readonly driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>;
   readonly blockedReason: BlockedReason;
+  readonly environmentId: EnvironmentId;
   readonly parentScope: Scope.Scope;
   readonly instanceId: ProviderInstanceId;
   readonly rawInstanceId: string;
@@ -323,7 +338,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
       instanceId,
       displayName: entry.displayName,
       accentColor: entry.accentColor,
-      environment: secrets.environment,
+      environment: withNativeEnvironmentId(secrets.environment, input.environmentId),
       enabled,
       config:
         secrets.config.length === 0
@@ -365,6 +380,7 @@ const makeReconcile = <R>(input: {
   readonly state: RegistryState;
   readonly driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>;
   readonly blockedReason: BlockedReason;
+  readonly environmentId: EnvironmentId;
   readonly parentScope: Scope.Scope;
 }): ((
   configMap: ProviderInstanceConfigMap,
@@ -372,7 +388,7 @@ const makeReconcile = <R>(input: {
   deferSecrets?: boolean,
   carried?: ReadonlyMap<ProviderInstanceId, InstanceSecrets>,
 ) => Effect.Effect<void, never, R | SecretResolver.SecretResolver>) => {
-  const { state, driversById, blockedReason, parentScope } = input;
+  const { state, driversById, blockedReason, environmentId, parentScope } = input;
   return (configMap, rebuild = new Set(), deferSecrets = false, carried = new Map()) =>
     Effect.gen(function* () {
       const previousEntries = yield* Ref.get(state.entries);
@@ -462,6 +478,7 @@ const makeReconcile = <R>(input: {
         const result = yield* buildEntry({
           driversById,
           blockedReason,
+          environmentId,
           parentScope,
           instanceId,
           rawInstanceId,
@@ -524,7 +541,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
     readonly mutator: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape;
   },
   never,
-  R | SecretResolver.SecretResolver | Scope.Scope
+  R | SecretResolver.SecretResolver | ServerEnvironment.ServerEnvironmentIdentity | Scope.Scope
 > {
   const driversById = new Map<ProviderDriverKind, AnyProviderDriver<R>>(
     input.drivers.map((driver) => [driver.driverKind, driver]),
@@ -551,6 +568,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
     state,
     driversById,
     blockedReason: input.blockedReason ?? (() => undefined),
+    environmentId: yield* (yield* ServerEnvironment.ServerEnvironmentIdentity).getEnvironmentId,
     parentScope,
   });
   const configMapRef = yield* Ref.make(input.configMap);
@@ -720,7 +738,7 @@ export const layer = <R>(input: {
 }): Layer.Layer<
   ProviderInstanceRegistry | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
   never,
-  R | SecretResolver.SecretResolver
+  R | SecretResolver.SecretResolver | ServerEnvironment.ServerEnvironmentIdentity
 > =>
   Layer.effectContext(
     makeProviderInstanceRegistry(input).pipe(
@@ -733,5 +751,5 @@ export const layer = <R>(input: {
   ) as Layer.Layer<
     ProviderInstanceRegistry | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
     never,
-    R | SecretResolver.SecretResolver
+    R | SecretResolver.SecretResolver | ServerEnvironment.ServerEnvironmentIdentity
   >;

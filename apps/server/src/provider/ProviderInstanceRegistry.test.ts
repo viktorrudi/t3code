@@ -962,11 +962,16 @@ describe("ProviderInstanceRegistry secret environment", () => {
         environment: [
           { name: "OPENAI_API_KEY", value: secret, sensitive: true },
           { name: "BASE_URL", value: "https://example.test", sensitive: false },
+          { name: "T3CODE_ENVIRONMENT_ID", value: "forged", sensitive: false },
+          { name: "t3code_environment_id", value: "also-forged", sensitive: false },
         ],
       },
     };
     const makeGated = makeProviderInstanceRegistry({ drivers: [driver], configMap }).pipe(
       Effect.provide(resolver),
+      Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("registry-environment")),
+      }),
     );
     // Secrets are read after startup, so wait for the change that applies them.
     const make = Effect.gen(function* () {
@@ -989,6 +994,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
         [
           { name: "OPENAI_API_KEY", value: "sk-live", sensitive: true },
           { name: "BASE_URL", value: "https://example.test", sensitive: false },
+          { name: "T3CODE_ENVIRONMENT_ID", value: "registry-environment", sensitive: false },
         ],
       ]);
     });

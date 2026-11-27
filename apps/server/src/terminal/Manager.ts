@@ -21,6 +21,7 @@ import {
   TerminalResizeError,
   TerminalSessionLookupError,
   TerminalWriteError,
+  type EnvironmentId,
   type TerminalAttachInput,
   type TerminalAttachStreamEvent,
   type TerminalClearInput,
@@ -77,6 +78,7 @@ import { increment, terminalSessionsTotal } from "../observability/Metrics.ts";
 import { expandHomeVariable } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
@@ -1607,6 +1609,7 @@ function createTerminalSpawnEnv(
   platform: NodeJS.Platform,
   home: string,
   threadId: string,
+  environmentId: string,
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -1635,7 +1638,15 @@ function createTerminalSpawnEnv(
       );
     }
   }
-  spawnEnv[PortScanner.AGENT_THREAD_ENV] = threadId;
+  // Native identity outranks client, provider and inherited values in any case.
+  const identity = {
+    [PortScanner.AGENT_THREAD_ENV]: threadId,
+    [ServerEnvironment.ENVIRONMENT_ID_ENV]: environmentId,
+  };
+  for (const key of Object.keys(spawnEnv)) {
+    if (Object.hasOwn(identity, key.toUpperCase())) delete spawnEnv[key];
+  }
+  Object.assign(spawnEnv, identity);
   if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
     spawnEnv.COLORTERM = "truecolor";
   }
@@ -1664,6 +1675,7 @@ function normalizedRuntimeEnv(
 
 interface TerminalManagerOptions {
   logsDir: string;
+  environmentId: EnvironmentId;
   historyLineLimit?: number;
   historyByteLimit?: number;
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
@@ -1763,6 +1775,7 @@ export const make = Effect.fn("TerminalManager.make")(function* (
   );
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
+    environmentId: yield* (yield* ServerEnvironment.ServerEnvironmentIdentity).getEnvironmentId,
     ptyAdapter,
     processTable: nativeTelemetry.processTable.pipe(
       Effect.mapError(
@@ -2870,6 +2883,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               platform,
               yield* HostProcess.HomeDirectory,
               session.threadId,
+              options.environmentId,
             );
             // Append managed install directories so agent commands resolve without shadowing user/system tools.
             if (

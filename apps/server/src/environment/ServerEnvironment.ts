@@ -57,6 +57,9 @@ export class ServerEnvironmentIdentity extends Context.Service<
   }
 >()("t3/environment/ServerEnvironment/ServerEnvironmentIdentity") {}
 
+/** Agents and terminals carry this server's environment id beside PortScanner.AGENT_THREAD_ENV. */
+export const ENVIRONMENT_ID_ENV = "T3CODE_ENVIRONMENT_ID";
+
 function platformOs(platform: NodeJS.Platform): ExecutionEnvironmentDescriptor["platform"]["os"] {
   switch (platform) {
     case "darwin":

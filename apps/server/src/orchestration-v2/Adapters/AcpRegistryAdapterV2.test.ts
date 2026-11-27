@@ -1718,6 +1718,7 @@ describe("AcpRegistryAdapterV2", () => {
       );
       assert.isDefined(agentEnvironment, "the agent itself must have been spawned");
       assert.equal(agentEnvironment?.T3CODE_THREAD_ID, "thread-acp-registry-thread-env");
+      assert.equal(agentEnvironment?.T3CODE_ENVIRONMENT_ID, "environment-acp-registry-thread-env");
       assert.equal(agentEnvironment?.T3_ACP_MCP_ENDPOINT, endpoint);
       assert.equal(agentEnvironment?.T3_ACP_MCP_AUTHORIZATION, "Bearer thread-env-token");
     }).pipe(Effect.provide(layerTest)),
