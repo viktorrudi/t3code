@@ -2251,27 +2251,44 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
           },
         };
+        const retainedWork: CodexReplay.CodexAppServerReplayEntry = {
+          type: "emit_inbound",
+          label: "keep the original turn in the settled background roster",
+          frame: {
+            method: "item/started",
+            params: {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              startedAtMs: 1782622445000,
+              item: backgroundCommandItem("inProgress"),
+            },
+          },
+        };
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
             scenario: `reused-turn-${completionOrder}`,
             entries: [
               ...preamble,
+              ...(completionOrder === "before" ? [retainedWork, completion] : []),
               withReplayRequestId(preamble[5]!, 4),
-              ...(completionOrder === "before" ? [completion] : []),
               withReplayRequestId(preamble[6]!, 4),
-              ...(completionOrder === "after" ? [completion] : []),
-              ...retry.slice(5, 7).map((entry) => withReplayRequestId(entry, 5)),
-              {
-                type: "emit_inbound",
-                label: "retry completed",
-                frame: {
-                  method: "turn/completed",
-                  params: {
-                    threadId: nativeThreadId,
-                    turn: makeCodexReplayTurn({ id: "retry-turn", status: "completed" }),
-                  },
-                },
-              },
+              ...(completionOrder === "after"
+                ? [
+                    completion,
+                    ...retry.slice(5, 7).map((entry) => withReplayRequestId(entry, 5)),
+                    {
+                      type: "emit_inbound" as const,
+                      label: "retry completed",
+                      frame: {
+                        method: "turn/completed",
+                        params: {
+                          threadId: nativeThreadId,
+                          turn: makeCodexReplayTurn({ id: "retry-turn", status: "completed" }),
+                        },
+                      },
+                    },
+                  ]
+                : []),
             ],
           }),
         );
@@ -2283,6 +2300,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           text: "work",
         });
         yield* harness.runtime.startTurn(first);
+        if (completionOrder === "before") yield* harness.firstTerminal;
         const result = yield* harness.runtime
           .startTurn({
             ...first,
@@ -2297,14 +2315,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (result._tag !== "Failure") return;
         const failure = result.failure;
         assert(ProviderAdapter.isProviderAdapterTurnStartError(failure));
-        assert.equal(failure.outcome, "not_delivered");
+        assert.equal(failure.outcome, completionOrder === "before" ? undefined : "not_delivered");
         assert.instanceOf(failure.cause, ProviderAdapter.ProviderAdapterProtocolError);
-        yield* harness.firstTerminal;
+        if (completionOrder === "after") yield* harness.firstTerminal;
         assert.deepEqual(
           harness.terminalEvents().map((event) => event.runOrdinal),
           [1],
         );
-        yield* harness.runtime.startTurn({
+        const retryStart = harness.runtime.startTurn({
           ...first,
           runId: RunId.make("retry"),
           attemptId: RunAttemptId.make("retry"),
@@ -2312,6 +2330,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           runOrdinal: 3,
           providerTurnOrdinal: 3,
         });
+        if (completionOrder === "before") {
+          const held = yield* retryStart.pipe(Effect.flip);
+          assert(ProviderAdapter.isProviderAdapterTurnStartError(held));
+          assert.equal(held.outcome, "not_delivered");
+          return;
+        }
+        yield* retryStart;
         yield* harness.awaitTerminal(2);
         assert.deepEqual(
           harness.terminalEvents().map((event) => [event.runOrdinal, event.status]),

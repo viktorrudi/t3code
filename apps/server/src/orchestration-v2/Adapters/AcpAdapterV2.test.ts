@@ -11734,6 +11734,11 @@ describe("AcpAdapterV2", () => {
         driver: ACP_TEST_DRIVER,
         nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
       });
+      const terminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal" && event.runOrdinal === 1),
+        Stream.runHead,
+        Effect.forkChild,
+      );
       const interruptExit = yield* runtime
         .interruptTurn({ providerThread, providerTurnId, requestRuntimeRestart: true })
         .pipe(Effect.exit);
@@ -11752,6 +11757,7 @@ describe("AcpAdapterV2", () => {
         .pipe(Effect.exit);
       if (Exit.isSuccess(resumeExit)) assert.fail("poisoned session must reject resumeThread");
       assert.include(Cause.pretty(resumeExit.cause), "session is poisoned");
+      assert.isUndefined(terminal.pollUnsafe(), "a teardown failure leaves turn 1 unverified");
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -11764,6 +11770,8 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const teardownStarted = yield* Deferred.make<void>();
       const releaseTeardown = yield* Deferred.make<void>();
+      const checkingExit = yield* Deferred.make<void>();
+      const releaseExit = yield* Deferred.make<void>();
       let runtimeOrdinalSeen = 0;
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = yield* makeAcpAdapterV2({
@@ -11787,6 +11795,16 @@ describe("AcpAdapterV2", () => {
               runtimeOrdinalSeen = runtimeOrdinal;
               return runtimeOrdinal === 1 ? { T3_ACP_HANG_PROMPT_FOREVER: "1" } : {};
             },
+            wrapRuntime: (runtime, ordinal) =>
+              ordinal === 1
+                ? {
+                    ...runtime,
+                    awaitVerifiedExit: Deferred.succeed(checkingExit, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseExit)),
+                      Effect.andThen(runtime.awaitVerifiedExit ?? Effect.never),
+                    ),
+                  }
+                : runtime,
             protocolEvents,
           }),
         },
@@ -11816,25 +11834,36 @@ describe("AcpAdapterV2", () => {
           makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
         )
         .pipe(Effect.forkScoped);
-      yield* Effect.yieldNow;
-      yield* Effect.yieldNow;
-      yield* Effect.yieldNow;
+      yield* Stream.fromQueue(protocolEvents).pipe(
+        Stream.filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
+        ),
+        Stream.runHead,
+      );
       const providerTurnId = idAllocator.derive.providerTurn({
         driver: ACP_TEST_DRIVER,
         nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
       });
       yield* pollProtocolMethods(protocolEvents);
+      const reachedTerminal = yield* Deferred.make<void>();
+      const terminals = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.tap(() => Deferred.succeed(reachedTerminal, undefined)),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
       const interruptFiber = yield* runtime
         .interruptTurn({ providerThread, providerTurnId, requestRuntimeRestart: true })
         .pipe(Effect.forkScoped);
       yield* Deferred.await(teardownStarted);
+      const terminalBeforeTeardown = yield* Deferred.isDone(reachedTerminal);
       const startFiber = yield* runtime
         .startTurn(
           makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
         )
         .pipe(Effect.forkScoped);
-      yield* Effect.yieldNow;
-      yield* Effect.yieldNow;
       assert.isUndefined(startFiber.pollUnsafe());
       assert.equal(runtimeOrdinalSeen, 1);
       const methodsDuringTeardown = yield* pollProtocolMethods(protocolEvents);
@@ -11842,8 +11871,24 @@ describe("AcpAdapterV2", () => {
       assert.notInclude(methodsDuringTeardown, "session/prompt");
 
       yield* Deferred.succeed(releaseTeardown, undefined);
+      const verified = yield* Effect.raceFirst(
+        Deferred.await(checkingExit).pipe(Effect.as(true)),
+        Fiber.await(interruptFiber).pipe(Effect.as(false)),
+      );
+      const terminalBeforeExit = yield* Deferred.isDone(reachedTerminal);
+      yield* Deferred.succeed(releaseExit, undefined);
       yield* Fiber.join(interruptFiber);
       yield* Fiber.join(startFiber);
+      assert.isFalse(terminalBeforeTeardown);
+      assert.isTrue(verified);
+      assert.isFalse(terminalBeforeExit);
+      assert.deepEqual(
+        (yield* Fiber.join(terminals)).map((event) => [event.runOrdinal, event.status]),
+        [
+          [1, "interrupted"],
+          [2, "completed"],
+        ],
+      );
       assert.equal(runtimeOrdinalSeen, 2);
       const replacementMethods = yield* pollProtocolMethods(protocolEvents);
       assert.equal(replacementMethods.filter((method) => method === "session/resume").length, 1);

@@ -7729,9 +7729,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(yield* Ref.get(activeTurns)),
             ]);
             const started = yield* client.request("turn/start", turnStartParams);
-            const previousTurn =
-              previousTurns.get(started.turn.id) ??
-              (yield* Ref.get(activeTurns)).get(started.turn.id);
+            const activePreviousTurn = (yield* Ref.get(activeTurns)).get(started.turn.id);
+            const previousTurn = previousTurns.get(started.turn.id) ?? activePreviousTurn;
             if (
               previousTurn !== undefined &&
               previousTurn.input.attemptId !== turnInput.attemptId
@@ -7741,7 +7740,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 threadId: turnInput.threadId,
                 providerThreadId: turnInput.providerThread.id,
                 runId: turnInput.runId,
-                outcome: "not_delivered",
+                ...(previousTurn === activePreviousTurn
+                  ? { outcome: "not_delivered" as const }
+                  : {}),
                 cause: new ProviderAdapter.ProviderAdapterProtocolError({
                   driver: CODEX_PROVIDER,
                   detail:

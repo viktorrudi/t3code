@@ -357,7 +357,7 @@ describe("CursorAdapterV2", () => {
     },
     {
       reason: "the SDK rate limit that broke the run",
-      verifyEnded: "after-wait" as const,
+      verifyEnded: "after-probe" as const,
       wait: Effect.fail(
         new CursorAgentSdk.CursorAgentSdkRunnerError({
           method: "run.wait",
@@ -372,6 +372,13 @@ describe("CursorAdapterV2", () => {
         message:
           "Cursor Agent SDK run.wait failed: Too many requests (resource_exhausted, HTTP 429)",
       },
+    },
+    {
+      reason: "a replay defect after the SDK created the run",
+      updates: [{ type: "text-delta", text: null }] as unknown as ReadonlyArray<InteractionUpdate>,
+      verifyEnded: "after-probe" as const,
+      wait: Effect.never,
+      failure: { class: "transport_error", message: "Provider turn failed." },
     },
     {
       reason: "a transport dump sent after earlier commentary",
@@ -584,7 +591,7 @@ describe("CursorAdapterV2", () => {
         Stream.runCollect,
       );
       const collector = yield* providerEvents.pipe(Effect.forkChild);
-      if (verifyEnded === "after-wait") {
+      if (verifyEnded === "after-probe") {
         yield* TestClock.adjust("59 seconds");
         assert.equal(exitChecks, 1);
         assert.isUndefined(collector.pollUnsafe());
