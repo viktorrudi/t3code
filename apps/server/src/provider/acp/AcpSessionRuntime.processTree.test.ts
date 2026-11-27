@@ -4,10 +4,15 @@ import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Scope from "effect/Scope";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
@@ -56,6 +61,56 @@ function makeController(input: {
 }
 
 const server = () => identity(process.pid, 1, process.pid, process.pid, "server");
+
+it.live("confirms ACP exit without signaling a successfully terminated POSIX group twice", () =>
+  Effect.gen(function* () {
+    const platform = yield* HostProcess.Platform;
+    if (platform === "win32") return;
+    const scope = yield* Scope.fork(yield* Scope.Scope);
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    let childPid: number | undefined;
+    const runtime = yield* AcpSessionRuntime.make({
+      cwd: process.cwd(),
+      spawn: { command: process.execPath, args: ["-e", "process.stdin.resume()"], shell: false },
+      clientInfo: { name: "test", version: "0" },
+      ownDetachedProcessGroup: true,
+      processGroupPlatform: platform,
+      processGroupTerminationGrace: 0,
+    }).pipe(
+      Effect.provideService(Scope.Scope, scope),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+        ...spawner,
+        spawn: (command) =>
+          spawner.spawn(command).pipe(
+            Effect.tap((child) =>
+              Effect.sync(() => {
+                childPid = Number(child.pid);
+              }),
+            ),
+          ),
+      }),
+    );
+    if (childPid === undefined) throw new Error("Expected an owned ACP child");
+    if (!runtime.terminateProcessGroup || !runtime.awaitVerifiedExit) {
+      throw new Error("Expected owned ACP teardown and exit verification");
+    }
+    const group = -childPid;
+    const sendSignal = process.kill.bind(process);
+    let forceSignals = 0;
+    const signals = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (pid === group && signal === "SIGTERM") return true;
+      if (pid === group && signal === "SIGKILL" && ++forceSignals > 1) {
+        throw Object.assign(new Error("group is exiting"), { code: "EPERM" });
+      }
+      return sendSignal(pid, signal);
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => signals.mockRestore()));
+    yield* runtime.terminateProcessGroup;
+    yield* Scope.close(scope, Exit.void);
+    expect(forceSignals).toBe(1);
+    yield* runtime.awaitVerifiedExit;
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
 
 describe("terminatePosixOwnedProcessTree", () => {
   it("parses unified cgroup paths and escaped cgroup2 mountinfo", () => {

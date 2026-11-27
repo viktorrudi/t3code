@@ -1602,10 +1602,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     }
   }
 
+  // macOS can reject a second SIGKILL while a successfully signaled group is exiting.
+  let groupForceSignalNeeded = true;
   const signalOwnedProcessGroup = (signal: NodeJS.Signals) =>
     Effect.try({
       try: () => {
+        if (!groupForceSignalNeeded) return false;
         signalProcessGroup(Number(child.pid), signal);
+        if (signal === "SIGKILL") groupForceSignalNeeded = false;
         return true;
       },
       catch: (cause) =>
@@ -1616,7 +1620,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     }).pipe(
       Effect.catch((error) => {
         const cause = error.cause as NodeJS.ErrnoException | undefined;
-        return cause?.code === "ESRCH" ? Effect.succeed(false) : Effect.fail(error);
+        if (cause?.code !== "ESRCH") return Effect.fail(error);
+        groupForceSignalNeeded = false;
+        return Effect.succeed(false);
       }),
     );
   const terminateWindowsProcessTree =
