@@ -10117,6 +10117,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         interruptContext === retiringPrompt?.context &&
                         interruptContext.providerTurnId === turnInput.providerTurnId
                       ) {
+                        const teardownState = yield* Ref.get(runtimeTeardownState);
+                        if (teardownState._tag === "Failed") return yield* teardownState.error;
                         interruptContext.interrupted = true;
                         return undefined;
                       }

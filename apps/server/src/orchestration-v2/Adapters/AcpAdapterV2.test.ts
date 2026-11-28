@@ -5650,6 +5650,13 @@ describe("AcpAdapterV2", () => {
           const laterStart = yield* harness.startTurn(3).pipe(Effect.exit);
           if (Exit.isSuccess(laterStart)) assert.fail("poisoned session must reject a later start");
           assert.include(Cause.pretty(laterStart.cause), "session is poisoned");
+          const stopAfterPoison = yield* harness.runtime
+            .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+            .pipe(Effect.exit);
+          if (Exit.isSuccess(stopAfterPoison)) {
+            assert.fail("Stop on a poisoned session must report the poison");
+          }
+          assert.include(Cause.pretty(stopAfterPoison.cause), "session is poisoned");
           assert.isUndefined(terminalBeforeProof);
           assert.isUndefined(terminals.pollUnsafe());
           assert.lengthOf(harness.natives, 1);
