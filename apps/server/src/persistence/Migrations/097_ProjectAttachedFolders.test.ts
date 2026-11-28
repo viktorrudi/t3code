@@ -5,7 +5,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import SearchMigration from "./081_ProjectionMessageSearchText.ts";
 import { runMigrations } from "../Migrations.ts";
 
-describe("097_ProjectAttachedFolders", () => {
+describe("ProjectAttachedFolders migration", () => {
   it.effect("upgrades existing projects with an empty attached folder list", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -40,7 +40,7 @@ describe("097_ProjectAttachedFolders", () => {
         const history = yield* sql<{
           readonly migration_id: number;
           readonly name: string;
-        }>`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id IN (61, 77, 80, 81, 82, 97) ORDER BY migration_id`;
+        }>`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id IN (61, 77, 80, 81, 82, 97, 103) ORDER BY migration_id`;
         assert.equal(projects[0]?.additional_workspace_roots_json, '["/admin","/docs"]');
         assert.deepEqual(history, [
           { migration_id: 61, name: "PullRequestReviewGuides" },
@@ -48,7 +48,8 @@ describe("097_ProjectAttachedFolders", () => {
           { migration_id: 80, name: "ScheduledTaskThreadMode" },
           { migration_id: 81, name: "ProjectionMessageSearchText" },
           { migration_id: 82, name: "TurnItemConversationIndex" },
-          { migration_id: 97, name: "ProjectAttachedFolders" },
+          { migration_id: 97, name: "IssueTrackerBindings" },
+          { migration_id: 103, name: "ProjectAttachedFolders" },
         ]);
         const messageColumns = yield* sql<{
           readonly name: string;
